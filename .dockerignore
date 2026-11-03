@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+res/
+neardev/
+.DS_Store
+*.pem
+services/oidc/config.toml

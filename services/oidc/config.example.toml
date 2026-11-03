@@ -1,0 +1,64 @@
+# Example configuration for the rbac-oidc provider.
+#
+# Copy this file to config.toml (which is git-ignored), replace the URLs and
+# account ids with your deployment, and run:
+#
+#   cargo run -p rbac-oidc -- services/oidc/config.toml
+#
+# The issuer must be the public, HTTPS base URL of this service. It is used as
+# the JWT `iss` claim and as the prefix of every discovery URL, so it must match
+# exactly what clients use (no trailing slash).
+
+issuer = "https://auth.example.com"
+listen = "127.0.0.1:8080"
+
+# NEAR JSON-RPC endpoint used to call `roles_of` on the contract and to check
+# that a NEP-413 public key is an access key of the claimed account.
+rpc_url = "https://rpc.testnet.near.org"
+contract_id = "rbac.testnet"
+
+# PKCS#8 PEM RSA private key used to sign JWTs. If this is omitted, a fresh
+# ephemeral key is generated at startup and all tokens become invalid on
+# restart. In production, generate a key and keep it secret:
+#
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+#     -out services/oidc/signing-key.pem
+#   chmod 600 services/oidc/signing-key.pem
+#
+# signing_key_path = "services/oidc/signing-key.pem"
+
+# NEP-413 recipient defaults to the host part of `issuer`.
+# nep413_recipient = "auth.example.com"
+#
+# Optional callback URL included in the signed NEP-413 payload. Wallets that
+# include a callback URL require this to be set to the exact same value.
+# nep413_callback_url = "https://auth.example.com/callback"
+
+access_token_ttl_secs = 900
+id_token_ttl_secs = 900
+authorization_code_ttl_secs = 300
+pending_login_ttl_secs = 300
+
+# Verify that the public key that signed the NEP-413 message is an access key
+# of the claimed account. Keep this enabled outside throwaway experiments.
+verify_access_key = true
+
+allowed_scopes = ["openid", "profile", "roles"]
+
+# A public client. Public clients have no secret and must use PKCE (S256).
+[[clients]]
+client_id = "demo-app"
+name = "Demo app"
+redirect_uris = ["https://app.example.com/callback"]
+required_roles = ["admin"]
+
+# A confidential client. It must authenticate at the token endpoint using
+# client_secret_basic or client_secret_post. Treat the secret like a password.
+[[clients]]
+client_id = "service-app"
+name = "Internal service"
+redirect_uris = ["https://service.example.com/callback"]
+client_secret = "replace-with-a-long-random-secret"
+required_roles = ["admin", "employee"]
+# Optional per-client scope restriction; defaults to the global allowed_scopes.
+# allowed_scopes = ["openid", "profile", "roles"]

@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# NEAR tooling / deployment artifacts
+/res/
+/neardev/
+.near-credentials/
+
+# Local configuration and secrets
+.env
+services/oidc/config.toml
+services/oidc/*.pem
+*.pem
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/

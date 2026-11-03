@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rbac-common",
+    "contracts/rbac-nft",
+    "services/oidc",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Plopmenz/NEAR-RBAC-NFT"
+rust-version = "1.95"
+
+[workspace.dependencies]
+rbac-common = { path = "crates/rbac-common" }
+near-sdk = "5.30.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+borsh = "1"
+thiserror = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+overflow-checks = true
