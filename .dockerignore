@@ -6,3 +6,7 @@ neardev/
 .DS_Store
 *.pem
 services/oidc/config.toml
+services/web/node_modules/
+services/web/dist/
+services/web/.astro/
+services/web/.env

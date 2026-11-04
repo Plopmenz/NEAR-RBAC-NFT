@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rbac-common",
     "contracts/rbac-nft",
+    "contracts/rbac-factory",
     "services/oidc",
 ]
 

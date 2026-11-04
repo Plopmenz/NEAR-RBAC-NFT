@@ -1,0 +1,373 @@
+#![doc = include_str!("../README.md")]
+
+mod events;
+
+#[cfg(test)]
+mod tests;
+
+use near_sdk::json_types::{Base64VecU8, U128, U64};
+use near_sdk::store::{IterableMap, LookupMap};
+use near_sdk::{env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise};
+
+/// Bytes reserved in the factory for one registry entry (record + owner/deployer indexes).
+const REGISTRY_RESERVE_BYTES: u128 = 2_048;
+/// Bytes reserved in the new child account for the empty contract state.
+const CHILD_STATE_RESERVE_BYTES: u128 = 1_000;
+/// Gas reserved for the child `new` call and the factory callback.
+const DEPLOY_CALL_GAS: Gas = Gas::from_tgas(60);
+const DEPLOY_CALLBACK_GAS: Gas = Gas::from_tgas(30);
+/// Minimum prepaid gas needed to create the account, deploy the wasm, and initialize it.
+const MIN_DEPLOY_PREPAID_GAS: Gas = Gas::from_tgas(150);
+
+const DEFAULT_PAGE_LIMIT: usize = 50;
+const MAX_PAGE_LIMIT: usize = 100;
+
+/// A registry entry for a deployed RBAC contract.
+///
+/// `owner_id` is the owner supplied at deployment time. The child contract can later transfer
+/// ownership with `set_owner`, so clients that need the *current* owner should query the child's
+/// `owner_id()` view.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContractRecord {
+    pub account_id: AccountId,
+    /// Subaccount label, without the factory suffix.
+    pub name: String,
+    /// Owner supplied to the child contract's `new` call.
+    pub owner_id: AccountId,
+    pub salary_token: AccountId,
+    pub payout_interval_ns: U64,
+    /// Account that paid for and triggered the deployment.
+    pub deployer_id: AccountId,
+    pub deployed_at_ns: U64,
+}
+
+/// Factory that deploys RBAC role NFT contracts as subaccounts and keeps a registry of them.
+#[near(contract_state)]
+#[derive(PanicOnDefault)]
+pub struct Contract {
+    owner_id: AccountId,
+    /// Stored rbac-nft wasm, set once by the factory owner.
+    code: Vec<u8>,
+    /// child account -> record. Iterable for discovery.
+    records: IterableMap<AccountId, ContractRecord>,
+    /// deploy-time owner -> child accounts.
+    by_owner: LookupMap<AccountId, Vec<AccountId>>,
+    /// deployer -> child accounts.
+    by_deployer: LookupMap<AccountId, Vec<AccountId>>,
+}
+
+#[near]
+impl Contract {
+    /// Creates the factory. The owner must upload the child wasm with [`Contract::set_code`]
+    /// before the first deployment.
+    #[init]
+    pub fn new(owner_id: AccountId) -> Self {
+        Self {
+            owner_id,
+            code: Vec::new(),
+            records: IterableMap::new(b"records".as_slice()),
+            by_owner: LookupMap::new(b"by_owner".as_slice()),
+            by_deployer: LookupMap::new(b"by_deployer".as_slice()),
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Factory administration
+    // ---------------------------------------------------------------------
+
+    /// Returns the factory owner.
+    pub fn owner_id(&self) -> AccountId {
+        self.owner_id.clone()
+    }
+
+    /// Transfers factory ownership. Only the current owner may call this.
+    pub fn set_owner(&mut self, new_owner_id: AccountId) {
+        self.assert_owner();
+        self.owner_id = new_owner_id;
+    }
+
+    /// Uploads or replaces the rbac-nft wasm stored by the factory.
+    ///
+    /// `code` is a base64-encoded wasm file. The attached deposit must cover the storage for the
+    /// code; the factory keeps that stake for as long as the code is stored. Replacing the code
+    /// affects future deployments only. This method is intended to be called by a CLI/script,
+    /// not by the browser UI.
+    #[payable]
+    pub fn set_code(&mut self, code: Base64VecU8) {
+        self.assert_owner();
+        let code: Vec<u8> = code.into();
+        require!(!code.is_empty(), "code must not be empty");
+        let storage = env::storage_byte_cost().saturating_mul(code.len() as u128);
+        require!(
+            env::attached_deposit() >= storage,
+            "attached deposit must cover code storage"
+        );
+        self.code = code;
+    }
+
+    /// Returns the length of the stored child wasm in bytes.
+    pub fn code_len(&self) -> U64 {
+        U64(self.code.len() as u64)
+    }
+
+    /// Returns the SHA-256 hash of the stored child wasm as lowercase hex.
+    pub fn code_hash(&self) -> String {
+        let hash = env::sha256(&self.code);
+        hash.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    /// Returns the deposit required to deploy one child contract at the current storage price.
+    ///
+    /// The factory keeps a small reserve for the registry entry and forwards the rest to the
+    /// child account, which must stake the wasm and its initial state.
+    pub fn required_deploy_deposit(&self) -> U128 {
+        let bytes = self.code.len() as u128 + CHILD_STATE_RESERVE_BYTES + REGISTRY_RESERVE_BYTES;
+        U128(
+            env::storage_byte_cost()
+                .as_yoctonear()
+                .saturating_mul(bytes),
+        )
+    }
+
+    /// Withdraws surplus balance (above storage stake) from the factory. Only the owner may call
+    /// this.
+    pub fn withdraw(&mut self, beneficiary_id: AccountId, amount: U128) -> Promise {
+        self.assert_owner();
+        let storage_stake = env::storage_byte_cost().saturating_mul(env::storage_usage() as u128);
+        let available = env::account_balance().saturating_sub(storage_stake);
+        require!(
+            NearToken::from_yoctonear(amount.0) <= available,
+            "amount exceeds withdrawable balance"
+        );
+        Promise::new(beneficiary_id).transfer(NearToken::from_yoctonear(amount.0))
+    }
+
+    // ---------------------------------------------------------------------
+    // Deployment
+    // ---------------------------------------------------------------------
+
+    /// Deploys a new rbac-nft contract at `{name}.{factory}` and initializes it.
+    ///
+    /// `owner_id` becomes the child contract's owner. The attached deposit must be at least
+    /// [`Contract::required_deploy_deposit`]; excess is forwarded to the child. The caller must
+    /// attach enough gas for the wasm deployment and initialization (at least 150 Tgas).
+    ///
+    /// The factory registers the child only after its `new` call succeeds. A failed deployment
+    /// leaves an uninitialized account at the target id, because the factory has no key for the
+    /// new account and cannot delete it. Check the transaction outcome and use a different name
+    /// if that happens.
+    #[payable]
+    pub fn deploy(
+        &mut self,
+        name: String,
+        owner_id: AccountId,
+        salary_token: AccountId,
+        payout_interval_ns: U64,
+    ) -> Promise {
+        require!(!self.code.is_empty(), "factory code is not configured");
+        require!(payout_interval_ns.0 > 0, "payout interval must be positive");
+        require!(
+            env::prepaid_gas() >= MIN_DEPLOY_PREPAID_GAS,
+            "at least 150 Tgas is required to deploy"
+        );
+
+        let factory = env::current_account_id();
+        validate_subaccount_name(&name, factory.as_str());
+        let account_id: AccountId = format!("{name}.{factory}")
+            .parse()
+            .unwrap_or_else(|_| env::panic_str("invalid child account id"));
+        require!(
+            !self.records.contains_key(&account_id),
+            "contract is already registered"
+        );
+
+        let required = self.required_deploy_deposit().0;
+        require!(
+            env::attached_deposit() >= NearToken::from_yoctonear(required),
+            "attached deposit is too low; call required_deploy_deposit"
+        );
+
+        // Keep a fixed reserve in the factory for the registry entry and forward the rest to the
+        // child. Any unused reserve accumulates and can be withdrawn by the factory owner.
+        let reserve = env::storage_byte_cost().saturating_mul(REGISTRY_RESERVE_BYTES);
+        let child_balance = env::attached_deposit().saturating_sub(reserve);
+        let deployer_id = env::predecessor_account_id();
+        let deployed_at_ns = U64(env::block_timestamp());
+
+        let init_args = near_sdk::serde_json::json!({
+            "owner_id": owner_id,
+            "salary_token": salary_token,
+            "payout_interval_ns": payout_interval_ns.0.to_string(),
+        })
+        .to_string()
+        .into_bytes();
+
+        let record = ContractRecord {
+            account_id: account_id.clone(),
+            name,
+            owner_id,
+            salary_token,
+            payout_interval_ns,
+            deployer_id,
+            deployed_at_ns,
+        };
+
+        Promise::new(account_id)
+            .create_account()
+            .deploy_contract(self.code.clone())
+            .transfer(child_balance)
+            .function_call(
+                "new".to_owned(),
+                init_args,
+                NearToken::from_yoctonear(0),
+                DEPLOY_CALL_GAS,
+            )
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(DEPLOY_CALLBACK_GAS)
+                    .on_deploy(record),
+            )
+    }
+
+    /// Private callback for [`Contract::deploy`]. Records the child only when initialization
+    /// succeeded.
+    #[private]
+    pub fn on_deploy(&mut self, record: ContractRecord) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "expected exactly one promise result"
+        );
+        if env::promise_result_checked(0, 1_024).is_err() {
+            events::emit_deploy_failed(record.account_id.as_str(), "initialization failed");
+            return false;
+        }
+        if self.records.contains_key(&record.account_id) {
+            events::emit_deploy_failed(record.account_id.as_str(), "already registered");
+            return false;
+        }
+
+        let account_id = record.account_id.clone();
+        let owner_id = record.owner_id.clone();
+        let deployer_id = record.deployer_id.clone();
+
+        self.records.insert(account_id.clone(), record.clone());
+        push_index(&mut self.by_owner, owner_id, account_id.clone());
+        push_index(&mut self.by_deployer, deployer_id, account_id);
+
+        events::emit_deploy(&record);
+        true
+    }
+
+    // ---------------------------------------------------------------------
+    // Discovery
+    // ---------------------------------------------------------------------
+
+    /// Total number of successfully deployed and registered contracts.
+    pub fn contract_count(&self) -> u64 {
+        u64::from(self.records.len())
+    }
+
+    /// Returns one registry entry by child account id.
+    pub fn get_contract(&self, account_id: AccountId) -> Option<ContractRecord> {
+        self.records.get(&account_id).cloned()
+    }
+
+    /// Lists all registered contracts with pagination.
+    pub fn get_contracts(
+        &self,
+        from_index: Option<U128>,
+        limit: Option<u32>,
+    ) -> Vec<ContractRecord> {
+        let (from, limit) = pagination(from_index, limit);
+        self.records
+            .iter()
+            .skip(from)
+            .take(limit)
+            .map(|(_, record)| record.clone())
+            .collect()
+    }
+
+    /// Lists contracts whose deploy-time owner is `owner_id`.
+    ///
+    /// The child contract may have transferred ownership since deployment. Query the child's
+    /// `owner_id()` for the current owner.
+    pub fn contracts_of_owner(
+        &self,
+        owner_id: AccountId,
+        from_index: Option<U128>,
+        limit: Option<u32>,
+    ) -> Vec<ContractRecord> {
+        let (from, limit) = pagination(from_index, limit);
+        self.by_owner
+            .get(&owner_id)
+            .into_iter()
+            .flatten()
+            .skip(from)
+            .take(limit)
+            .filter_map(|account_id| self.records.get(account_id).cloned())
+            .collect()
+    }
+
+    /// Lists contracts deployed by `deployer_id`.
+    pub fn contracts_of_deployer(
+        &self,
+        deployer_id: AccountId,
+        from_index: Option<U128>,
+        limit: Option<u32>,
+    ) -> Vec<ContractRecord> {
+        let (from, limit) = pagination(from_index, limit);
+        self.by_deployer
+            .get(&deployer_id)
+            .into_iter()
+            .flatten()
+            .skip(from)
+            .take(limit)
+            .filter_map(|account_id| self.records.get(account_id).cloned())
+            .collect()
+    }
+
+    fn assert_owner(&self) {
+        require!(
+            env::predecessor_account_id() == self.owner_id,
+            "only the factory owner can call this method"
+        );
+    }
+}
+
+fn push_index(map: &mut LookupMap<AccountId, Vec<AccountId>>, key: AccountId, value: AccountId) {
+    let mut values = map.get(&key).cloned().unwrap_or_default();
+    values.push(value);
+    map.insert(key, values);
+}
+
+fn validate_subaccount_name(name: &str, factory: &str) {
+    require!(!name.is_empty(), "name must not be empty");
+    require!(
+        name.len() + 1 + factory.len() <= 64,
+        "name is too long for a subaccount"
+    );
+    require!(
+        name.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_'),
+        "name may only contain lowercase letters, digits, '-' and '_'"
+    );
+    require!(
+        !name.starts_with('-') && !name.starts_with('_'),
+        "name must start with a letter or digit"
+    );
+    require!(
+        !name.ends_with('-') && !name.ends_with('_'),
+        "name must end with a letter or digit"
+    );
+}
+
+fn pagination(from_index: Option<U128>, limit: Option<u32>) -> (usize, usize) {
+    let from = from_index.map(|value| value.0).unwrap_or(0);
+    let from = usize::try_from(from).unwrap_or(usize::MAX);
+    let limit = limit
+        .map(|value| value as usize)
+        .unwrap_or(DEFAULT_PAGE_LIMIT)
+        .min(MAX_PAGE_LIMIT);
+    (from, limit)
+}

@@ -1,20 +1,25 @@
 # NEAR RBAC NFT
 
 Non-transferable **NEP-245 role NFTs**, on-chain **role-gated access checks**, and
-**NEP-141 salary streaming** — plus a Rust **OpenID Connect provider** that turns
-on-chain roles into off-chain service access.
+**NEP-141 salary streaming** — plus a **factory** for one-transaction deployments, a Rust
+**OpenID Connect provider** that turns on-chain roles into off-chain service access, and an
+Astro web app for deploying and managing contracts.
 
 The contract is designed to be owned by a Sputnik DAO or Trezu account. Each role is
 represented by a non-transferable NFT membership. Role owners can mint and burn memberships,
 other contracts can query `has_role`, and members can claim salary in any NEP-141 token.
 
 ```
-                    owns / governs
+                     owns / governs
    DAO or Trezu ───────────────────────► rbac-nft contract
                                               │
                          role NFTs (NEP-245)  │  salary (NEP-141 ft_transfer)
                                               ▼
                                         salary token
+
+   browser ── wallet ──► rbac-factory ──deploy──► rbac-nft
+      │                     │ registry
+      └────── reads ────────┘
 
    NEAR wallet ── NEP-413 login ──► rbac-oidc ── JSON-RPC `roles_of` ──► rbac-nft
                                        │
@@ -35,6 +40,7 @@ other contracts can query `has_role`, and members can claim salary in any NEP-14
 - [Contract API](#contract-api)
 - [Salary model](#salary-model)
 - [Using roles from another contract](#using-roles-from-another-contract)
+- [Factory and web app](#factory-and-web-app)
 - [OIDC provider](#oidc-provider)
 - [Security model](#security-model)
 - [Limitations](#limitations)
@@ -68,12 +74,17 @@ other contracts can query `has_role`, and members can claim salary in any NEP-14
 │       ├── metadata.rs            # NEP-245 metadata types
 │       ├── events.rs              # NEP-297 mt_mint / mt_burn events
 │       └── tests/                 # 76 unit tests
+├── contracts/rbac-factory/        # Factory, child wasm storage, deployment registry
+│   └── src/                       # deploy/set_code/registry + 24 tests
 ├── services/oidc/                 # OIDC provider (axum)
 │   ├── src/                       # Config, NEP-413, RPC role source, JWT, handlers
 │   ├── tests/oidc_flow.rs         # 14 end-to-end HTTP tests
 │   ├── config.example.toml        # Annotated example configuration
 │   └── Dockerfile
-├── scripts/build-contract.sh      # Build the wasm artifact into res/
+├── services/web/                  # Astro frontend (static, wallet-selector, no indexer)
+│   ├── src/                       # Page, orchestration, RPC/contract/favorites helpers
+│   └── tests/                     # 32 Vitest unit tests
+├── scripts/build-contract.sh      # Build both wasm artifacts into res/
 └── .github/workflows/ci.yml
 ```
 
@@ -89,6 +100,7 @@ other contracts can query `has_role`, and members can claim salary in any NEP-14
 - [near-cli](https://github.com/near/near-cli) or
   [near-cli-rs](https://github.com/near/near-cli-rs) for deployment
 - Optional: [`cargo-near`](https://github.com/near/cargo-near) for reproducible builds
+- Node.js **22.23.4+** and npm 9.6.5+ for the web app
 
 ### Build and test
 
@@ -96,19 +108,24 @@ other contracts can query `has_role`, and members can claim salary in any NEP-14
 cargo test --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+
+cd services/web
+npm install
+npm test
+npm run check
+npm run build
 ```
 
-### Build the contract
+### Build the contracts
 
 ```bash
 ./scripts/build-contract.sh
-# or:
-cargo build -p rbac-nft --target wasm32-unknown-unknown --release
+# or individually:
+cargo build -p rbac-nft -p rbac-factory --target wasm32-unknown-unknown --release
 ```
 
-The artifact is
-`target/wasm32-unknown-unknown/release/rbac_nft.wasm` (copied to `res/rbac_nft.wasm` by
-the script).
+The artifacts are `res/rbac_nft.wasm` and `res/rbac_factory.wasm` (the script also leaves
+them under `target/wasm32-unknown-unknown/release/`).
 
 ### Deploy
 
@@ -135,6 +152,45 @@ near deploy \
 
 `owner_id` should be the DAO/Trezu account. If you deploy from another account and later
 hand the contract to the DAO, call `set_owner` first while you still control the deployer.
+
+### Deploy through the factory (recommended)
+
+The factory deploys `{name}.{factory}` in one wallet transaction and keeps a registry for
+discovery. Deploy the factory, upload the child wasm once, then let users deploy children:
+
+```bash
+near deploy factory.testnet res/rbac_factory.wasm \
+  --initFunction new \
+  --initArgs '{"owner_id":"dao.testnet"}'
+
+near call factory.testnet set_code \
+  "{\"code\":\"$(base64 -w0 res/rbac_nft.wasm)\"}" \
+  --accountId dao.testnet \
+  --deposit 6 \
+  --gas 300000000000000
+
+near view factory.testnet required_deploy_deposit
+```
+
+Each child stores its own copy of the wasm, so the deposit is roughly **5–6 NEAR** and is not a
+fee: the factory forwards it to the child. A child deployed by the factory has no protocol-level
+access key and is therefore immutable. See
+[`contracts/rbac-factory/README.md`](contracts/rbac-factory/README.md) for the full API and
+caveats.
+
+### Run the web app
+
+```bash
+cd services/web
+cp .env.example .env
+# set PUBLIC_FACTORY_CONTRACT_ID and the network/RPC values
+npm install
+npm run dev
+```
+
+The app deploys contracts, discovers contracts owned by an address (with local favorites),
+shows roles held by an address with payout progress and claim buttons, and exposes owner/role
+owner administration controls. See [`services/web/README.md`](services/web/README.md).
 
 ### Configure a role and grant it
 
@@ -369,6 +425,47 @@ curl -s https://rpc.testnet.near.org \
 The contract result is a JSON byte array in `result.result`; decode it with
 `JSON.parse(Buffer.from(result.result).toString())` in JavaScript.
 
+## Factory and web app
+
+### Factory
+
+[`contracts/rbac-factory`](contracts/rbac-factory) lets anyone create an initialized
+`rbac-nft` as `{name}.{factory}` with a single transaction:
+
+1. The factory owner uploads the `rbac-nft` wasm once with
+   `set_code(code_base64)`, attaching enough deposit for storage.
+2. A deployer calls
+   `deploy(name, owner_id, salary_token, payout_interval_ns)` with at least
+   `required_deploy_deposit()` and enough gas (150 Tgas minimum; the web app sends 300).
+3. The factory creates the account, deploys the wasm, funds it, and calls `new`.
+4. A private callback records the child only after initialization succeeds and emits a
+   `rbac-factory` NEP-297 `deploy` event.
+
+Registry views: `contract_count`, `get_contract`, `get_contracts`, `contracts_of_owner`, and
+`contracts_of_deployer`. `contracts_of_owner` uses the **deploy-time** owner; clients that need
+the current owner must query the child's `owner_id()`.
+
+Factory-deployed children have no protocol-level access key, so they cannot be upgraded or
+deleted. A failed initialization leaves an orphan account at the target id; retry with another
+name. The registry is append-only and does not track ownership transfers or deletion.
+
+### Web app
+
+[`services/web`](services/web) is a static Astro app with vanilla TypeScript and
+wallet-selector. It has three views:
+
+| View | Behavior |
+| --- | --- |
+| **Deploy** | Shows factory status and the required deposit, validates the subaccount/owner/token/interval, and calls `deploy` through the connected wallet. |
+| **Owned contracts** | Scans the full registry, verifies each child's live `owner_id()`, filters by the scanned address, and supports local favorites to suppress spam. |
+| **My roles** | Scans the registry with `roles_of`, then reads role salary, `last_claim`, `claimable_role`, and renders a payout interval progress bar and claim button per membership. |
+
+Contract owners get role creation/salary, role-owner delegation, payroll configuration, and
+ownership transfer controls. Contract or role owners get mint/burn controls. All reads go
+directly to NEAR JSON-RPC; no indexer is required. The registry is a discovery hint only: every
+displayed contract is re-checked on-chain, and favorites are scoped by network and account in
+`localStorage`.
+
 ## OIDC provider
 
 The `rbac-oidc` service is a small OpenID Connect provider that authenticates a NEAR account
@@ -515,6 +612,17 @@ See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed ser
 - Salary transfers use a private callback; only the contract itself can call it.
 - Claim arithmetic uses checked multiplication/addition and integer interval math.
 
+**Factory and web app**
+
+- Only the factory owner can upload/replace the child wasm or withdraw surplus balance.
+- The factory does not add a key to children, so a deployment cannot be upgraded or deleted by
+  the factory. The configured owner controls contract methods.
+- The registry is not an ownership oracle. The web app verifies `owner_id()` on the child before
+  showing a contract as owned and never grants UI permissions from registry data alone.
+- Wallet writes are signed by the user's wallet; the app never handles private keys.
+- Favorites are stored locally and only filter display. They do not affect on-chain state.
+- RPC read results are trusted, as with any dApp. Use a reputable endpoint.
+
 **OIDC**
 
 - NEP-413 signature verification binds the message, a 256-bit nonce, the recipient, and the
@@ -533,6 +641,17 @@ See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed ser
 - Sessions are referenced by the access token's `jti`; logout revokes them.
 - `/userinfo` and `/introspect` re-read roles from the chain and revoke a session when the
   client's required roles disappear.
+
+**Factory and web app**
+
+- Only the factory owner can upload/replace the child wasm or withdraw surplus balance.
+- The factory does not add a key to children, so a deployment cannot be upgraded or deleted by
+  the factory. The configured owner controls contract methods.
+- The registry is not an ownership oracle. The web app verifies `owner_id()` on the child before
+  showing a contract as owned and never grants UI permissions from registry data alone.
+- Wallet writes are signed by the user's wallet; the app never handles private keys.
+- Favorites are stored locally and only filter display. They do not affect on-chain state.
+- RPC read results are trusted, as with any dApp. Use a reputable endpoint.
 
 **Operational**
 
@@ -568,6 +687,22 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 - `claim` iterates all roles held by an account in one call; the 32-role cap keeps this
   bounded but does not guarantee gas availability for every token implementation.
 
+**Factory and web app**
+
+- A failed child `new` call leaves an uninitialized account. The factory cannot delete it and
+  cannot retry the same name.
+- Children deployed through the factory are immutable because they have no access keys. Plan
+  for upgrades before using it for a long-lived production contract.
+- Every child stores a full copy of the wasm, so deployment is storage-heavy. The required
+  deposit is roughly 5–6 NEAR at current prices.
+- The registry is append-only and does not track ownership changes or deletion.
+- The web app scans the whole registry and makes one or more RPC reads per child. This is fine
+  for small registries but grows linearly; an indexer is the next step for scale.
+- Reads have a 20-second timeout. A failed child read is treated as not-owned/no-roles for that
+  contract instead of failing the whole scan.
+- Token metadata is best-effort; missing metadata falls back to raw units.
+- The frontend is not audited and does not pin/verify the factory wasm hash.
+
 **OIDC**
 
 - The pending-login/code/session store is process-local and in-memory. Restarting loses
@@ -597,26 +732,35 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 cargo test --workspace
 ```
 
-The workspace currently has **128 tests**:
+The Rust workspace currently has **152 tests**, and the web app has **32 Vitest tests**
+(**184 total**):
 
 - `crates/rbac-common`: 6 tests covering role hashing, token-id encoding, documented vectors,
   and role-name validation.
 - `contracts/rbac-nft`: 76 tests covering initialization/admin permissions, role creation,
   delegation, mint/burn, membership queries, NEP-245 reads/enumeration/metadata, salary
   accrual, partial intervals, claim callbacks, and the non-transferable entry points.
+- `contracts/rbac-factory`: 24 tests covering code upload/storage, name and gas/deposit
+  validation, child creation receipts, callback registration/failure, duplicate protection,
+  registry pagination, owner/deployer indexes, and owner-only administration.
 - `services/oidc`: 32 unit tests covering config validation (including the example config),
   RSA/JWKS, NEP-413 serialization and signatures, role-result decoding, and handler helpers.
 - `services/oidc/tests/oidc_flow.rs`: 14 end-to-end HTTP tests covering discovery, JWKS,
   full PKCE authorization-code flow, code binding/reuse/expiry, confidential clients,
   login signature/access-key checks, required roles, live role revocation, logout,
   introspection, and client binding for introspection.
+- `services/web/tests`: 32 Vitest tests covering role-id vectors and token ids, account and
+  subaccount validation, amount/duration formatting and parsing, interval progress, favorites
+  scoping/persistence, bounded-concurrency mapping, and role/contract permission helpers.
 
 Lint and wasm checks:
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo build -p rbac-nft --target wasm32-unknown-unknown --release
+cargo build -p rbac-nft -p rbac-factory --target wasm32-unknown-unknown --release
+
+cd services/web && npm test && npm run check && npm run build
 ```
 
 > `near-sdk` refuses to compile the contract for a native target unless the

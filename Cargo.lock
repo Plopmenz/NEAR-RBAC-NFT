@@ -2426,6 +2426,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rbac-factory"
+version = "0.1.0"
+dependencies = [
+ "near-parameters",
+ "near-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rbac-nft"
 version = "0.1.0"
 dependencies = [

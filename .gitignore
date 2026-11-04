@@ -13,6 +13,11 @@ services/oidc/config.toml
 services/oidc/*.pem
 *.pem
 
+# Frontend build artifacts and dependencies
+/services/web/node_modules/
+/services/web/dist/
+/services/web/.astro/
+
 # Editor / OS noise
 .DS_Store
 .idea/

@@ -1,0 +1,261 @@
+---
+import "@near-wallet-selector/modal-ui/styles.css";
+import "../styles/global.css";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Deploy and manage non-transferable RBAC role NFTs with on-chain salary streaming on NEAR."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>NEAR RBAC NFT</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">R</span>
+        <span>RBAC<span class="brand-accent">NFT</span></span>
+      </a>
+      <div class="topbar-right">
+        <span class="network-badge" id="network-badge">testnet</span>
+        <span class="wallet-account" id="wallet-account">Not connected</span>
+        <button class="btn btn-small" id="wallet-button" type="button">Connect wallet</button>
+        <button class="btn btn-small ghost" id="wallet-disconnect" type="button" hidden>
+          Disconnect
+        </button>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Roles as non-transferable NFTs</p>
+        <h1>Payroll and access control for NEAR DAOs.</h1>
+        <p class="lede">
+          Deploy an RBAC contract in one transaction, grant roles as NEP-245 NFTs, and let
+          members claim NEP-141 salary per role. No indexer: discovery is read directly from the
+          factory registry and each contract.
+        </p>
+      </section>
+
+      <div class="warning" id="config-warning" hidden></div>
+      <div class="notice" id="global-notice" hidden role="status"></div>
+
+      <nav class="tabs" aria-label="Views" role="tablist">
+        <button class="tab" data-tab="deploy" type="button" role="tab" aria-selected="true">
+          1. Deploy
+        </button>
+        <button class="tab" data-tab="contracts" type="button" role="tab" aria-selected="false">
+          2. Owned contracts
+        </button>
+        <button class="tab" data-tab="roles" type="button" role="tab" aria-selected="false">
+          3. My roles
+        </button>
+      </nav>
+
+      <section class="panel" data-panel="deploy" role="tabpanel">
+        <div class="panel-heading">
+          <div>
+            <h2>Deploy an RBAC contract</h2>
+            <p class="muted">
+              The factory creates <code>{"{name}.{factory}"}</code>, deploys the wasm, and initializes
+              the contract with the owner you choose. The owner can be a DAO, Trezu, or any NEAR
+              account.
+            </p>
+          </div>
+          <div id="factory-summary" class="stat-box">
+            <span class="stat-label">Factory</span>
+            <span class="stat-value" id="factory-id">not configured</span>
+          </div>
+        </div>
+
+        <div class="two-column">
+          <form class="card form" id="deploy-form" novalidate>
+            <h3>Contract settings</h3>
+
+            <label class="field">
+              <span>Subaccount name</span>
+              <input
+                id="deploy-name"
+                name="name"
+                placeholder="acme"
+                autocomplete="off"
+                required
+              />
+              <small>Lowercase letters, digits, '-' and '_'. The factory suffix is added.</small>
+            </label>
+
+            <label class="field">
+              <span>Contract owner</span>
+              <input
+                id="deploy-owner"
+                name="owner"
+                placeholder="dao.testnet"
+                autocomplete="off"
+                required
+              />
+              <small>
+                Use your DAO/Trezu account. The connected wallet pays for deployment and must hold
+                enough NEAR.
+              </small>
+            </label>
+
+            <label class="field">
+              <span>Salary token (NEP-141)</span>
+              <input
+                id="deploy-token"
+                name="token"
+                placeholder="usdc.testnet"
+                autocomplete="off"
+                required
+              />
+              <small>The token contract used by <code>ft_transfer</code> for salary payouts.</small>
+            </label>
+
+            <div class="field">
+              <span>Payout interval</span>
+              <div class="inline-fields">
+                <input
+                  id="deploy-interval-value"
+                  name="intervalValue"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value="7"
+                  required
+                />
+                <select id="deploy-interval-unit" name="intervalUnit">
+                  <option value="seconds">seconds</option>
+                  <option value="minutes">minutes</option>
+                  <option value="hours">hours</option>
+                  <option value="days">days</option>
+                  <option value="weeks" selected>weeks</option>
+                </select>
+              </div>
+              <small>Salary accrues in full intervals of this length.</small>
+            </div>
+
+            <label class="field">
+              <span>Attached deposit (NEAR)</span>
+              <input
+                id="deploy-deposit"
+                name="deposit"
+                inputmode="decimal"
+                placeholder="6"
+                required
+              />
+              <small id="deploy-deposit-hint">
+                The factory reports the minimum deposit after loading.
+              </small>
+            </label>
+
+            <p class="preview" id="deploy-preview">Enter a name to see the child account id.</p>
+            <div class="form-actions">
+              <button class="btn" id="deploy-submit" type="submit">Deploy contract</button>
+            </div>
+            <p class="status" id="deploy-status" role="status"></p>
+          </form>
+
+          <aside class="card aside-card">
+            <h3>What you get</h3>
+            <ul class="check-list">
+              <li>Non-transferable NEP-245 role NFTs.</li>
+              <li>Per-role NEP-141 salary, paid per full interval.</li>
+              <li>Role-owned mint and burn administration.</li>
+              <li>On-chain <code>has_role</code> checks for other contracts.</li>
+              <li>Optional OIDC SSO backed by live on-chain roles.</li>
+            </ul>
+            <h3>Deployment cost</h3>
+            <p class="muted">
+              Each child stores its own copy of the rbac-nft wasm. The required deposit is roughly
+              5–6 NEAR depending on the wasm size and network storage price. The factory forwards
+              the deposit to the child; it is not a fee.
+            </p>
+            <p class="muted" id="factory-code-note"></p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="panel" data-panel="contracts" role="tabpanel" hidden>
+        <div class="panel-heading">
+          <div>
+            <h2>Contracts you own</h2>
+            <p class="muted">
+              Scans the factory registry and verifies each child's live <code>owner_id()</code>.
+              Anyone can deploy a contract with your account as owner, so favorite the real ones.
+            </p>
+          </div>
+        </div>
+
+        <form class="search-row" id="owned-form">
+          <input
+            id="owned-address"
+            name="address"
+            placeholder="dao.testnet"
+            autocomplete="off"
+            aria-label="Owner account to scan"
+          />
+          <button class="btn" type="submit">Scan</button>
+          <button class="btn ghost" id="owned-use-wallet" type="button">Use connected wallet</button>
+        </form>
+        <label class="checkbox-row">
+          <input type="checkbox" id="favorites-only" />
+          <span>Show favorites only</span>
+          <span class="muted" id="favorites-count"></span>
+        </label>
+
+        <p class="status" id="owned-status" role="status"></p>
+        <div id="owned-summary"></div>
+        <div class="card-list" id="owned-list"></div>
+      </section>
+
+      <section class="panel" data-panel="roles" role="tabpanel" hidden>
+        <div class="panel-heading">
+          <div>
+            <h2>Roles you hold</h2>
+            <p class="muted">
+              Shows each role membership, the time until the next payout, the claimable amount, and
+              a claim button. Enter any address or use the connected wallet.
+            </p>
+          </div>
+        </div>
+
+        <form class="search-row" id="roles-form">
+          <input
+            id="roles-address"
+            name="address"
+            placeholder="alice.testnet"
+            autocomplete="off"
+            aria-label="Account whose roles to show"
+          />
+          <button class="btn" type="submit">Scan</button>
+          <button class="btn ghost" id="roles-use-wallet" type="button">Use connected wallet</button>
+          <button class="btn ghost" id="roles-refresh" type="button">Refresh</button>
+        </form>
+
+        <p class="status" id="roles-status" role="status"></p>
+        <div id="roles-summary"></div>
+        <div class="card-list" id="roles-list"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>NEAR RBAC NFT · hackathon project, not audited</span>
+      <span>
+        <a href="https://github.com/Plopmenz/NEAR-RBAC-NFT" rel="noreferrer">Source</a>
+      </span>
+    </footer>
+
+    <noscript>
+      <p class="warning">This app needs JavaScript to query NEAR and sign wallet transactions.</p>
+    </noscript>
+
+    <script>
+      import "../scripts/app";
+    </script>
+  </body>
+</html>
