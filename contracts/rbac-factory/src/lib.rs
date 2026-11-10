@@ -43,11 +43,14 @@ pub struct ContractRecord {
 }
 
 /// Factory that deploys RBAC role NFT contracts as subaccounts and keeps a registry of them.
+///
+/// The factory is deliberately immutable and keyless after initialization: it has no owner, no
+/// admin methods, and no way to replace the stored child wasm. The code is fixed at creation time
+/// by [`Contract::new`], so every deployment is verifiable against the factory's `code_hash`.
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
-    owner_id: AccountId,
-    /// Stored rbac-nft wasm, set once by the factory owner.
+    /// rbac-nft wasm stored once at initialization. Never modified.
     code: Vec<u8>,
     /// child account -> record. Iterable for discovery.
     records: IterableMap<AccountId, ContractRecord>,
@@ -59,43 +62,14 @@ pub struct Contract {
 
 #[near]
 impl Contract {
-    /// Creates the factory. The owner must upload the child wasm with [`Contract::set_code`]
-    /// before the first deployment.
-    #[init]
-    pub fn new(owner_id: AccountId) -> Self {
-        Self {
-            owner_id,
-            code: Vec::new(),
-            records: IterableMap::new(b"records".as_slice()),
-            by_owner: LookupMap::new(b"by_owner".as_slice()),
-            by_deployer: LookupMap::new(b"by_deployer".as_slice()),
-        }
-    }
-
-    // ---------------------------------------------------------------------
-    // Factory administration
-    // ---------------------------------------------------------------------
-
-    /// Returns the factory owner.
-    pub fn owner_id(&self) -> AccountId {
-        self.owner_id.clone()
-    }
-
-    /// Transfers factory ownership. Only the current owner may call this.
-    pub fn set_owner(&mut self, new_owner_id: AccountId) {
-        self.assert_owner();
-        self.owner_id = new_owner_id;
-    }
-
-    /// Uploads or replaces the rbac-nft wasm stored by the factory.
+    /// Creates the factory and stores the child wasm permanently.
     ///
-    /// `code` is a base64-encoded wasm file. The attached deposit must cover the storage for the
-    /// code; the factory keeps that stake for as long as the code is stored. Replacing the code
-    /// affects future deployments only. This method is intended to be called by a CLI/script,
-    /// not by the browser UI.
+    /// `code` is a base64-encoded rbac-nft wasm file. The attached deposit must cover the storage
+    /// for the code; the factory keeps that stake for as long as the code is stored. There is no
+    /// owner and no way to replace the code after this call.
+    #[init]
     #[payable]
-    pub fn set_code(&mut self, code: Base64VecU8) {
-        self.assert_owner();
+    pub fn new(code: Base64VecU8) -> Self {
         let code: Vec<u8> = code.into();
         require!(!code.is_empty(), "code must not be empty");
         let storage = env::storage_byte_cost().saturating_mul(code.len() as u128);
@@ -103,8 +77,17 @@ impl Contract {
             env::attached_deposit() >= storage,
             "attached deposit must cover code storage"
         );
-        self.code = code;
+        Self {
+            code,
+            records: IterableMap::new(b"records".as_slice()),
+            by_owner: LookupMap::new(b"by_owner".as_slice()),
+            by_deployer: LookupMap::new(b"by_deployer".as_slice()),
+        }
     }
+
+    // ---------------------------------------------------------------------
+    // Stored child code
+    // ---------------------------------------------------------------------
 
     /// Returns the length of the stored child wasm in bytes.
     pub fn code_len(&self) -> U64 {
@@ -119,8 +102,8 @@ impl Contract {
 
     /// Returns the deposit required to deploy one child contract at the current storage price.
     ///
-    /// The factory keeps a small reserve for the registry entry and forwards the rest to the
-    /// child account, which must stake the wasm and its initial state.
+    /// The factory keeps a fixed reserve for the registry entry and forwards the rest to the child
+    /// account, which must stake the wasm and its initial state.
     pub fn required_deploy_deposit(&self) -> U128 {
         let bytes = self.code.len() as u128 + CHILD_STATE_RESERVE_BYTES + REGISTRY_RESERVE_BYTES;
         U128(
@@ -128,19 +111,6 @@ impl Contract {
                 .as_yoctonear()
                 .saturating_mul(bytes),
         )
-    }
-
-    /// Withdraws surplus balance (above storage stake) from the factory. Only the owner may call
-    /// this.
-    pub fn withdraw(&mut self, beneficiary_id: AccountId, amount: U128) -> Promise {
-        self.assert_owner();
-        let storage_stake = env::storage_byte_cost().saturating_mul(env::storage_usage() as u128);
-        let available = env::account_balance().saturating_sub(storage_stake);
-        require!(
-            NearToken::from_yoctonear(amount.0) <= available,
-            "amount exceeds withdrawable balance"
-        );
-        Promise::new(beneficiary_id).transfer(NearToken::from_yoctonear(amount.0))
     }
 
     // ---------------------------------------------------------------------
@@ -189,7 +159,7 @@ impl Contract {
         );
 
         // Keep a fixed reserve in the factory for the registry entry and forward the rest to the
-        // child. Any unused reserve accumulates and can be withdrawn by the factory owner.
+        // child. Any unused reserve stays with the factory, which has no withdrawal method.
         let reserve = env::storage_byte_cost().saturating_mul(REGISTRY_RESERVE_BYTES);
         let child_balance = env::attached_deposit().saturating_sub(reserve);
         let deployer_id = env::predecessor_account_id();
@@ -325,13 +295,6 @@ impl Contract {
             .take(limit)
             .filter_map(|account_id| self.records.get(account_id).cloned())
             .collect()
-    }
-
-    fn assert_owner(&self) {
-        require!(
-            env::predecessor_account_id() == self.owner_id,
-            "only the factory owner can call this method"
-        );
     }
 }
 

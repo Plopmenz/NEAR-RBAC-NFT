@@ -1,7 +1,8 @@
 //! NEP-297 event helpers for the RBAC role NFTs.
 //!
-//! The contract emits standard `nep245` `mt_mint` and `mt_burn` events. Role configuration and
-//! salary changes are intentionally not NEP-245 token events; indexers can read them from state.
+//! The contract emits standard `nep245` `mt_mint` and `mt_burn` events. Token ids are the decimal
+//! 64-bit role ids and every event moves an amount of `1`. Role configuration and salary changes
+//! are intentionally not NEP-245 token events; indexers can read them from state.
 
 use near_sdk::serde::Serialize;
 use near_sdk::{env, AccountId};

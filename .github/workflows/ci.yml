@@ -43,7 +43,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build contracts
-        run: cargo build -p rbac-nft -p rbac-factory --target wasm32-unknown-unknown --release
+        run: ./scripts/build-contract.sh
+
+      - name: Upload wasm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-wasm
+          path: |
+            res/rbac_nft.wasm
+            res/rbac_factory.wasm
+          if-no-files-found: error
 
   web:
     name: Web test, check, build

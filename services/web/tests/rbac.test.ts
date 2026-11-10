@@ -11,7 +11,7 @@ import type { ContractSnapshot, RoleView } from "../src/lib/types";
 
 function role(overrides: Partial<RoleView> = {}): RoleView {
   return {
-    role_id: 1,
+    role_id: "10117748766825055253",
     name: "admin",
     owner: "dao.testnet",
     configured_owner: null,

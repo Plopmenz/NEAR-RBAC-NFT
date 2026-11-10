@@ -509,18 +509,30 @@ function renderFactory(): void {
   if (info.codeLen === 0) {
     warning.hidden = false;
     warning.textContent =
-      "The factory has no rbac-nft wasm yet. The factory owner must call set_code before deploying.";
+      "The factory has no rbac-nft wasm. It was not initialized correctly; deploy a new factory account.";
     submit.disabled = true;
     note.textContent = `Registry: ${info.contractCount} contract(s).`;
     return;
   }
 
+  const expected = config.expectedChildCodeHash;
+  if (expected && info.codeHash.toLowerCase() !== expected) {
+    warning.hidden = false;
+    warning.textContent = `Pinned child wasm hash ${expected} does not match the factory's ${info.codeHash}.`;
+    submit.disabled = true;
+    note.textContent = `Child wasm: ${(info.codeLen / 1024).toFixed(0)} KiB · registry: ${
+      info.contractCount
+    } contract(s).`;
+    return;
+  }
+
   warning.hidden = true;
   submit.disabled = false;
+  const pin = expected ? " (pinned)" : "";
   note.textContent = `Child wasm: ${(info.codeLen / 1024).toFixed(0)} KiB · hash ${info.codeHash.slice(
     0,
     12,
-  )}… · registry: ${info.contractCount} contract(s).`;
+  )}…${pin} · registry: ${info.contractCount} contract(s).`;
 
   const required = BigInt(info.requiredDeposit);
   const deposit = byId<HTMLInputElement>("deploy-deposit");

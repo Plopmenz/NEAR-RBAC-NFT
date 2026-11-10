@@ -4,18 +4,18 @@ import { roleId, tokenId } from "../src/lib/roles";
 
 describe("role ids", () => {
   it("matches the Rust test vectors", async () => {
-    expect(await roleId("admin")).toBe(2_355_721_957);
-    expect(await roleId("employee")).toBe(802_947_447);
-    expect(await roleId("manager")).toBe(1_860_478_057);
-    expect(await roleId("hr.manager")).toBe(1_475_994_381);
-    expect(await roleId("Treasury")).toBe(1_793_088_973);
+    expect(await roleId("admin")).toBe("10117748766825055253");
+    expect(await roleId("employee")).toBe("3448633025363786332");
+    expect(await roleId("manager")).toBe("7990692413185102085");
+    expect(await roleId("hr.manager")).toBe("6339347599350065209");
+    expect(await roleId("Treasury")).toBe("7701258499861874806");
   });
 
   it("is case sensitive", async () => {
     expect(await roleId("Admin")).not.toBe(await roleId("admin"));
   });
 
-  it("encodes token ids like the contract", async () => {
-    expect(await tokenId("admin", "alice.near")).toBe("2355721957:alice.near");
+  it("uses the decimal role id as the token id", async () => {
+    expect(await tokenId("admin")).toBe("10117748766825055253");
   });
 });

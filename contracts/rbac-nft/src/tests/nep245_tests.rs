@@ -10,7 +10,7 @@ fn token_and_balance_views() {
     let mut contract = new_contract();
     grant_role(&mut contract, "alice.test.near", "admin", 0, 0);
 
-    let id = token_id("admin", "alice.test.near");
+    let id = token_id(role_id("admin"));
     assert_eq!(contract.mt_balance_of(user(), id.clone()), U128(1));
     assert_eq!(
         contract.mt_balance_of(account("bob.test.near"), id.clone()),
@@ -18,14 +18,15 @@ fn token_and_balance_views() {
     );
     assert_eq!(contract.mt_supply(id.clone()), Some(U128(1)));
     assert_eq!(contract.mt_supply("missing".to_owned()), None);
+    assert_eq!(contract.mt_supply("42".to_owned()), None);
 
     let tokens = contract.mt_token(vec![id.clone(), "missing".to_owned()]);
     assert_eq!(tokens.len(), 2);
     let token = tokens[0].as_ref().expect("existing token");
     assert_eq!(token.token_id, id);
-    assert_eq!(token.owner_id, Some(user()));
+    assert_eq!(token.owner_id, None, "a role token has many holders");
     assert_eq!(token.base_metadata_id, base_metadata_id(role_id("admin")));
-    assert_eq!(token.token_metadata, None);
+    assert!(token.token_metadata.is_some());
     assert!(tokens[1].is_none());
 }
 
@@ -34,67 +35,99 @@ fn batch_balance_and_supply() {
     let mut contract = new_contract();
     grant_role(&mut contract, "alice.test.near", "admin", 0, 0);
     grant_role(&mut contract, "alice.test.near", "employee", 0, 0);
+    create_role(&mut contract, "manager", 0);
 
-    let admin = token_id("admin", "alice.test.near");
-    let employee = token_id("employee", "alice.test.near");
-    let missing = token_id("manager", "alice.test.near");
+    let admin = token_id(role_id("admin"));
+    let employee = token_id(role_id("employee"));
+    let manager = token_id(role_id("manager"));
+    let missing = token_id(role_id("unknown"));
 
     assert_eq!(
         contract.mt_batch_balance_of(
             user(),
-            vec![admin.clone(), employee.clone(), missing.clone()]
+            vec![
+                admin.clone(),
+                employee.clone(),
+                manager.clone(),
+                missing.clone()
+            ]
         ),
-        vec![U128(1), U128(1), U128(0)]
+        vec![U128(1), U128(1), U128(0), U128(0)]
     );
     assert_eq!(
-        contract.mt_batch_supply(vec![admin, employee, missing]),
-        vec![Some(U128(1)), Some(U128(1)), None]
+        contract.mt_batch_supply(vec![admin, employee, manager, missing]),
+        vec![Some(U128(1)), Some(U128(1)), Some(U128(0)), None]
     );
 }
 
 #[test]
-fn token_supply_is_scoped_to_the_exact_account() {
+fn supply_counts_all_holders_of_a_role() {
+    let mut contract = new_contract();
+    create_role(&mut contract, "admin", 0);
+    set_env(owner(), 0);
+    contract.mint_role(user(), "admin".to_owned());
+    contract.mint_role(account("bob.test.near"), "admin".to_owned());
+
+    let id = token_id(role_id("admin"));
+    assert_eq!(contract.mt_supply(id.clone()), Some(U128(2)));
+    assert_eq!(contract.mt_balance_of(user(), id.clone()), U128(1));
+    assert_eq!(
+        contract.mt_balance_of(account("bob.test.near"), id.clone()),
+        U128(1)
+    );
+}
+
+#[test]
+fn supply_is_scoped_to_the_role_not_an_account() {
     let mut contract = new_contract();
     grant_role(&mut contract, "alice.test.near", "admin", 0, 0);
 
-    assert_eq!(contract.mt_supply(token_id("admin", "bob.test.near")), None);
     assert_eq!(
-        contract.mt_balance_of(
-            account("bob.test.near"),
-            token_id("admin", "alice.test.near")
-        ),
+        contract.mt_balance_of(account("bob.test.near"), token_id(role_id("admin"))),
         U128(0)
+    );
+    assert_eq!(
+        contract.mt_supply(format!("{}:alice.test.near", role_id("admin"))),
+        None
     );
 }
 
 #[test]
-fn enumerates_tokens_and_tokens_for_owner() {
+fn enumerates_role_tokens_and_tokens_for_owner() {
     let mut contract = new_contract();
     grant_role(&mut contract, "alice.test.near", "admin", 0, 0);
     grant_role(&mut contract, "alice.test.near", "employee", 0, 0);
     grant_role(&mut contract, "alice.test.near", "manager", 0, 0);
     grant_role(&mut contract, "bob.test.near", "employee", 0, 0);
 
-    assert_eq!(contract.mt_tokens(None, None).len(), 4);
+    assert_eq!(
+        contract.mt_tokens(None, None).len(),
+        3,
+        "one token per configured role, not per membership"
+    );
     assert_eq!(contract.mt_tokens(Some(U128(1)), Some(2)).len(), 2);
     assert_eq!(contract.mt_tokens(Some(U128(10)), None).len(), 0);
 
     let alice_tokens = contract.mt_tokens_for_owner(user(), None, None);
     assert_eq!(alice_tokens.len(), 3);
-    assert!(alice_tokens
-        .iter()
-        .all(|token| token.owner_id == Some(user())));
+    assert!(alice_tokens.iter().all(|token| token.owner_id.is_none()));
 
     let page = contract.mt_tokens_for_owner(user(), Some(U128(1)), Some(1));
     assert_eq!(page.len(), 1);
 
+    assert_eq!(
+        contract
+            .mt_tokens_for_owner(account("bob.test.near"), None, None)
+            .len(),
+        1
+    );
     assert!(contract
         .mt_tokens_for_owner(account("nobody.test.near"), None, None)
         .is_empty());
 }
 
 #[test]
-fn traversal_order_survives_burns() {
+fn burning_the_last_holder_keeps_the_token_type() {
     let mut contract = new_contract();
     grant_role(&mut contract, "alice.test.near", "admin", 0, 0);
     grant_role(&mut contract, "alice.test.near", "employee", 0, 0);
@@ -103,8 +136,14 @@ fn traversal_order_survives_burns() {
     contract.burn_role(user(), "admin".to_owned());
 
     let tokens = contract.mt_tokens(None, None);
-    assert_eq!(tokens.len(), 1);
-    assert_eq!(tokens[0].token_id, token_id("employee", "alice.test.near"));
+    assert_eq!(tokens.len(), 2, "role configuration is retained");
+    let ids: Vec<String> = tokens.into_iter().map(|token| token.token_id).collect();
+    assert!(ids.contains(&token_id(role_id("admin"))));
+    assert!(ids.contains(&token_id(role_id("employee"))));
+    assert_eq!(
+        contract.mt_supply(token_id(role_id("admin"))),
+        Some(U128(0))
+    );
 }
 
 #[test]
@@ -129,8 +168,7 @@ fn base_metadata_by_id_and_token_id() {
     assert_eq!(base[0].copies, Some(1));
     assert_eq!(base[0].symbol, None);
 
-    let by_token =
-        contract.mt_metadata_base_by_token_id(vec![token_id("admin", "alice.test.near")]);
+    let by_token = contract.mt_metadata_base_by_token_id(vec![token_id(role_id("admin"))]);
     assert_eq!(by_token, base);
 }
 
@@ -164,7 +202,7 @@ fn base_metadata_rejects_unknown_token_ids() {
 }
 
 #[test]
-fn token_metadata_describes_membership() {
+fn token_metadata_describes_the_role() {
     let mut contract = new_contract();
     grant_role(
         &mut contract,
@@ -173,7 +211,7 @@ fn token_metadata_describes_membership() {
         500,
         2_000_000_000,
     );
-    let id = token_id("admin", "alice.test.near");
+    let id = token_id(role_id("admin"));
 
     let all = contract.mt_metadata_token_all(vec![id.clone()]);
     assert_eq!(all.len(), 1);
@@ -184,15 +222,19 @@ fn token_metadata_describes_membership() {
         .description
         .as_deref()
         .unwrap()
-        .contains("alice.test.near"));
-    assert_eq!(all[0].token.issued_at.as_deref(), Some("2000"));
+        .contains("admin"));
+    assert_eq!(
+        all[0].token.issued_at, None,
+        "metadata is role-level, not per membership"
+    );
 
     let extra: serde_json::Value =
         serde_json::from_str(all[0].token.extra.as_deref().unwrap()).unwrap();
     assert_eq!(extra["role"], "admin");
-    assert_eq!(extra["role_id"], role_id("admin"));
+    assert_eq!(extra["role_id"], role_id("admin").to_string());
     assert_eq!(extra["salary"], "500");
     assert_eq!(extra["payout_interval_ns"], INTERVAL_NS.to_string());
+    assert_eq!(extra["holders"], 1);
 
     let instance = contract.mt_metadata_token_by_token_id(vec![id]);
     assert_eq!(instance.len(), 1);
@@ -239,7 +281,7 @@ fn metadata_reflects_salary_updates() {
         contract.set_role_salary("admin".to_owned(), U128(900))
     });
 
-    let all = contract.mt_metadata_token_all(vec![token_id("admin", "alice.test.near")]);
+    let all = contract.mt_metadata_token_all(vec![token_id(role_id("admin"))]);
     let extra: serde_json::Value =
         serde_json::from_str(all[0].token.extra.as_deref().unwrap()).unwrap();
     assert_eq!(extra["salary"], "900");
@@ -253,7 +295,7 @@ fn metadata_reflects_payout_interval_updates() {
         contract.set_payout_config(account("usdc.test.near"), U64(2_000_000_000))
     });
 
-    let all = contract.mt_metadata_token_all(vec![token_id("admin", "alice.test.near")]);
+    let all = contract.mt_metadata_token_all(vec![token_id(role_id("admin"))]);
     let extra: serde_json::Value =
         serde_json::from_str(all[0].token.extra.as_deref().unwrap()).unwrap();
     assert_eq!(extra["payout_interval_ns"], "2000000000");
@@ -267,7 +309,7 @@ fn mt_transfer_is_disabled() {
     set_env(owner(), 0);
     contract.mt_transfer(
         account("bob.test.near"),
-        token_id("admin", "alice.test.near"),
+        token_id(role_id("admin")),
         U128(1),
         None,
         None,
@@ -282,7 +324,7 @@ fn mt_batch_transfer_is_disabled() {
     set_env(owner(), 0);
     contract.mt_batch_transfer(
         account("bob.test.near"),
-        vec![token_id("admin", "alice.test.near")],
+        vec![token_id(role_id("admin"))],
         vec![U128(1)],
         None,
         None,
@@ -297,7 +339,7 @@ fn mt_transfer_call_is_disabled() {
     set_env(owner(), 0);
     let _ = contract.mt_transfer_call(
         account("bob.test.near"),
-        token_id("admin", "alice.test.near"),
+        token_id(role_id("admin")),
         U128(1),
         None,
         None,
@@ -313,7 +355,7 @@ fn mt_batch_transfer_call_is_disabled() {
     set_env(owner(), 0);
     let _ = contract.mt_batch_transfer_call(
         account("bob.test.near"),
-        vec![token_id("admin", "alice.test.near")],
+        vec![token_id(role_id("admin"))],
         vec![U128(1)],
         None,
         None,

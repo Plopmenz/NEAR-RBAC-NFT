@@ -353,6 +353,59 @@ fn claim_callback_rejects_multiple_promise_results() {
 }
 
 #[test]
+fn holders_of_the_same_role_accrue_independently() {
+    let mut contract = new_contract();
+    set_env(owner(), 0);
+    contract.set_role_salary("employee".to_owned(), U128(100));
+    contract.mint_role(user(), "employee".to_owned());
+
+    set_env(owner(), 2 * INTERVAL_NS);
+    contract.mint_role(account("bob.test.near"), "employee".to_owned());
+
+    set_env(user(), 4 * INTERVAL_NS);
+    assert_eq!(contract.claimable(user()), U128(400));
+    assert_eq!(
+        contract.claimable(account("bob.test.near")),
+        U128(200),
+        "bob's accrual starts at his own mint time"
+    );
+
+    expect_promise(contract.claim(user()));
+    set_env(user(), 4 * INTERVAL_NS);
+    assert_eq!(contract.claimable(user()), U128(0));
+    assert_eq!(
+        contract.claimable(account("bob.test.near")),
+        U128(200),
+        "alice's claim does not move bob's timestamp"
+    );
+}
+
+#[test]
+fn burning_one_holder_does_not_affect_other_holders() {
+    let mut contract = new_contract();
+    create_role(&mut contract, "employee", 100);
+    set_env(owner(), 0);
+    contract.mint_role(user(), "employee".to_owned());
+    contract.mint_role(account("bob.test.near"), "employee".to_owned());
+
+    set_env(owner(), 2 * INTERVAL_NS);
+    contract.burn_role(user(), "employee".to_owned());
+
+    set_env(owner(), 2 * INTERVAL_NS);
+    assert_eq!(contract.claimable(user()), U128(0));
+    assert_eq!(
+        contract.claimable(account("bob.test.near")),
+        U128(200),
+        "the remaining holder keeps accruing"
+    );
+    assert_eq!(
+        contract.members_of("employee".to_owned()),
+        vec![account("bob.test.near")]
+    );
+    assert_eq!(contract.get_role("employee".to_owned()).unwrap().holders, 1);
+}
+
+#[test]
 fn last_claim_is_none_for_unknown_tokens() {
     let contract = new_contract();
     assert_eq!(

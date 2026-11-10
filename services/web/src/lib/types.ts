@@ -4,6 +4,7 @@ export interface AppConfig {
   network: NetworkId;
   rpcUrl: string;
   factoryContractId: string;
+  expectedChildCodeHash: string;
   explorerUrl: string;
 }
 
@@ -25,7 +26,7 @@ export interface FtMetadata {
 }
 
 export interface RoleView {
-  role_id: number;
+  role_id: string;
   name: string;
   owner: string;
   configured_owner: string | null;

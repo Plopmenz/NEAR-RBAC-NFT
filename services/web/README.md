@@ -10,7 +10,8 @@ indexer.
 ## What it does
 
 - **Deploy** a new `rbac-nft` at `{name}.{factory}` in one wallet transaction. The owner can be
-  any account, including a DAO or Trezu.
+  any account, including a DAO or Trezu. If `PUBLIC_EXPECTED_CHILD_CODE_HASH` is set, deployment
+  is blocked unless the immutable factory reports exactly that child wasm hash.
 - **Owned contracts** scans the factory registry, verifies each child's live `owner_id()`, and
   shows contracts currently owned by the scanned address. Favorites are stored in
   `localStorage` so spam contracts deployed with your account as owner can be hidden.
@@ -27,8 +28,8 @@ always calls `owner_id()` / `roles_of()` on the child contract before trusting i
 ## Prerequisites
 
 - Node.js **22.23.4+** (Astro 7 requirement) and npm 9.6.5+
-- A deployed [`rbac-factory`](../../contracts/rbac-factory) with the `rbac-nft` wasm uploaded
-  through `set_code`
+- A deployed [`rbac-factory`](../../contracts/rbac-factory) initialized once with the `rbac-nft`
+  wasm in `new(code)`. The factory has no owner and the code cannot be replaced.
 
 ## Configuration
 
@@ -42,7 +43,8 @@ cp .env.example .env
 | --- | --- | --- |
 | `PUBLIC_NEAR_NETWORK` | no | `testnet` (default) or `mainnet`. |
 | `PUBLIC_NEAR_RPC_URL` | no | RPC endpoint for reads. Defaults to the public RPC for the network. |
-| `PUBLIC_FACTORY_CONTRACT_ID` | yes | Factory account. Without it, deployment and discovery are disabled and a banner is shown. |
+| `PUBLIC_FACTORY_CONTRACT_ID` | yes | Factory account, e.g. `rbac-factory.testnet`. Without it, deployment and discovery are disabled and a banner is shown. |
+| `PUBLIC_EXPECTED_CHILD_CODE_HASH` | no | SHA-256 of the reviewed `rbac-nft` wasm. When set, the app refuses to deploy if `code_hash()` differs. |
 | `PUBLIC_EXPLORER_URL` | no | Explorer base URL. Defaults to NEARBlocks for the network. |
 
 These are **build-time** variables. Rebuild after changing them. A missing factory is not
@@ -73,7 +75,9 @@ provider for production.
 1. Connect a NEAR wallet. The connected account pays for deployments and signs admin calls.
 2. In **Deploy**, choose a subaccount name, the contract owner (your DAO/Trezu), the NEP-141
    salary token, and the payout interval. The factory reports the minimum deposit; the app
-   pre-fills it. Excess deposit is forwarded to the child.
+   pre-fills it. The panel shows the factory's child wasm hash and marks it pinned when it
+   matches `PUBLIC_EXPECTED_CHILD_CODE_HASH`. Excess deposit above the factory's fixed registry
+   reserve is forwarded to the child.
 3. In **Owned contracts**, scan the owner address. Favorite the contracts you care about.
 4. Open a contract's **Contract administration** panel to create roles, set salaries, delegate
    role owners, change payroll configuration, or transfer ownership.
@@ -109,7 +113,8 @@ salary, so the UI asks for confirmation first.
 - Favorites and address/tab state are local to the browser/network/account. Favorites do not
   protect against a malicious contract that later changes its `owner_id`; they only reduce
   noise in the UI.
-- The app does not verify the factory's stored wasm hash against a known release. Confirm
+- The app can verify the factory's stored wasm hash if you set
+  `PUBLIC_EXPECTED_CHILD_CODE_HASH`. Without that pin it only displays the hash, so confirm
   `code_hash()` yourself before deploying if that matters.
 - The UI is not audited. See the root [Security model](../../README.md#security-model) and
   [Limitations](../../README.md#limitations).

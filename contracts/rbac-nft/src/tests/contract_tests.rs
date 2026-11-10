@@ -3,7 +3,7 @@
 use near_sdk::json_types::{U128, U64};
 use near_sdk::test_utils::get_logs;
 use near_sdk::NearToken;
-use rbac_common::role_id;
+use rbac_common::{role_id, token_id};
 
 use super::helpers::*;
 use crate::{Contract, MAX_ROLES_PER_ACCOUNT};
@@ -54,7 +54,7 @@ fn set_role_salary_creates_a_role() {
         contract.set_role_salary("admin".to_owned(), U128(1_000))
     });
 
-    assert_eq!(view.role_id, role_id("admin"));
+    assert_eq!(view.role_id, U64(role_id("admin")));
     assert_eq!(view.name, "admin");
     assert_eq!(view.owner, owner());
     assert_eq!(view.configured_owner, None);
@@ -63,9 +63,9 @@ fn set_role_salary_creates_a_role() {
     assert_eq!(contract.role_count(), 1);
 
     assert_eq!(contract.get_role("admin".to_owned()), Some(view.clone()));
-    assert_eq!(contract.get_role_by_id(role_id("admin")), Some(view));
+    assert_eq!(contract.get_role_by_id(U64(role_id("admin"))), Some(view));
     assert_eq!(contract.get_role("unknown".to_owned()), None);
-    assert_eq!(contract.get_role_by_id(0), None);
+    assert_eq!(contract.get_role_by_id(U64(0)), None);
 }
 
 #[test]
@@ -215,17 +215,17 @@ fn mint_role_creates_membership() {
     let mut contract = new_contract();
     create_role(&mut contract, "admin", 100);
 
-    let token_id = call_as(OWNER_ID, 7, || {
+    let minted_token_id = call_as(OWNER_ID, 7, || {
         contract.mint_role(user(), "admin".to_owned())
     });
 
-    assert_eq!(token_id, format!("{}:{}", role_id("admin"), user()));
+    assert_eq!(minted_token_id, token_id(role_id("admin")));
     assert!(contract.has_role(user(), "admin".to_owned()));
-    assert!(contract.has_role_id(user(), role_id("admin")));
+    assert!(contract.has_role_id(user(), U64(role_id("admin"))));
     assert!(!contract.has_role(account("bob.test.near"), "admin".to_owned()));
     assert_eq!(contract.members_of("admin".to_owned()), vec![user()]);
     assert_eq!(contract.roles_of(user()), vec!["admin".to_owned()]);
-    assert_eq!(contract.role_ids_of(user()), vec![role_id("admin")]);
+    assert_eq!(contract.role_ids_of(user()), vec![U64(role_id("admin"))]);
     assert_eq!(contract.get_role("admin".to_owned()).unwrap().holders, 1);
     assert_eq!(
         contract.last_claim(user(), "admin".to_owned()),
@@ -374,7 +374,7 @@ fn roles_of_and_members_of_are_sorted_and_deduplicated() {
     assert_eq!(contract.role_ids_of(user()), {
         let mut ids = vec![role_id("alpha"), role_id("zeta")];
         ids.sort_unstable();
-        ids
+        ids.into_iter().map(U64).collect::<Vec<_>>()
     });
     assert_eq!(
         contract.members_of("zeta".to_owned()),
@@ -449,10 +449,7 @@ fn mint_and_burn_emit_nep_297_events() {
     assert_eq!(json["standard"], "nep245");
     assert_eq!(json["version"], "1.0.0");
     assert_eq!(json["data"][0]["owner_id"], user().to_string());
-    assert_eq!(
-        json["data"][0]["token_ids"][0],
-        format!("{}:{}", role_id("admin"), user())
-    );
+    assert_eq!(json["data"][0]["token_ids"][0], token_id(role_id("admin")));
     assert_eq!(json["data"][0]["amounts"][0], "1");
 
     set_env(owner(), 0);

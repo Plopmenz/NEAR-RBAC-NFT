@@ -1,7 +1,9 @@
 //! NEP-245 metadata types.
 //!
-//! The role name is exposed as the base-token name. Individual tokens are the memberships of an
-//! account in a role, so their token metadata describes the membership (issue time, salary, role).
+//! Each configured role is one token type. Its token id and base metadata id are both the decimal
+//! representation of the 64-bit role id, and the base metadata exposes the human-readable role
+//! name. Membership is a balance of `1` on that token type, so the token metadata is role-level
+//! rather than per-holder.
 
 use near_sdk::near;
 
@@ -28,7 +30,7 @@ pub struct MTBaseTokenMetadata {
     pub reference_hash: Option<String>,
 }
 
-/// NEP-245 instance token metadata (one per membership).
+/// NEP-245 token metadata (one per configured role).
 #[near(serializers = [json])]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MTTokenMetadata {

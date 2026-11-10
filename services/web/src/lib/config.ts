@@ -25,6 +25,7 @@ export function loadConfig(): AppConfig {
     network,
     rpcUrl: env.PUBLIC_NEAR_RPC_URL?.trim() || DEFAULT_RPC[network],
     factoryContractId: env.PUBLIC_FACTORY_CONTRACT_ID?.trim() || "",
+    expectedChildCodeHash: env.PUBLIC_EXPECTED_CHILD_CODE_HASH?.trim().toLowerCase() || "",
     explorerUrl: (env.PUBLIC_EXPLORER_URL?.trim() || DEFAULT_EXPLORER[network]).replace(
       /\/+$/,
       "",

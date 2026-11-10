@@ -9,15 +9,16 @@ the full project guide, OIDC flow, and security model.
 ## Identifiers
 
 ```text
-role_id          = u32::from_be_bytes(SHA-256(role_name)[0..4])
-token_id         = "{role_id}:{account_id}"
-base_metadata_id = "{role_id}"
+role_id          = u64::from_be_bytes(SHA-256(role_name)[0..8])
+token_id         = "role_id"              (decimal string)
+base_metadata_id = "role_id"              (decimal string)
 ```
 
-Example: `admin` → `2355721957`, so `alice.testnet`'s admin token is
-`2355721957:alice.testnet`. Role names are case-sensitive, at most 64 bytes, and must not
-have surrounding whitespace or control characters. A 32-bit collision is rejected when a
-role is configured.
+Each role is one NEP-245 token type. Membership is a balance of `1` on that token type, so
+`mt_balance_of` returns `0`/`1`, `mt_supply` returns the holder count, and metadata is
+role-level. Example: `admin` → `10117748766825055253`; that number is also the token id and
+base metadata id. Role names are case-sensitive, at most 64 bytes, and must not have surrounding
+whitespace or control characters. A hash collision is rejected when a role is configured.
 
 ## Initialization
 
@@ -43,23 +44,28 @@ role is configured.
   needed.
 - `set_role_owner(role, owner: Option<AccountId>) -> RoleView` — contract owner or the
   current effective role owner. `None` falls back to the contract owner.
-- `get_role(role)`, `get_role_by_id(role_id)`, `get_roles(from_index?, limit?)`,
+- `get_role(role)`, `get_role_by_id(role_id: U64)`, `get_roles(from_index?, limit?)`,
   `role_count()`.
+- `RoleView.role_id` is a `U64` decimal string.
 
 ### Membership
 
 - `mint_role(account_id, role) -> String` — contract owner or role owner. The role must be
-  configured. Starts salary accrual at the current block timestamp.
+  configured. Returns the decimal role id / token id. Starts salary accrual at the current block
+  timestamp.
 - `burn_role(account_id, role)` — contract owner or role owner. Access stops immediately and
   unclaimed salary is discarded.
 - `has_role(account_id, role) -> bool`
-- `has_role_id(account_id, role_id) -> bool`
+- `has_role_id(account_id, role_id: U64) -> bool`
 - `roles_of(account_id) -> Vec<String>`
-- `role_ids_of(account_id) -> Vec<u32>`
+- `role_ids_of(account_id) -> Vec<U64>`
 - `members_of(role) -> Vec<AccountId>`
 
-An account can hold each role once and at most 32 roles in total. The cap keeps `claim`
-inside the block gas limit.
+An account can hold each role once and at most 32 roles in total. The limit is configurable at
+build time via the compile-time constant `MAX_ROLES_PER_ACCOUNT` in `src/lib.rs`; it is not a
+runtime or owner setting. 32 is deliberately conservative: `claim` loops over every role held, so
+the cap bounds gas use and response size, and `claim_role` can claim a single role. Raising the
+limit requires rebuilding and redeploying the contract.
 
 ### Salary
 
@@ -72,9 +78,9 @@ inside the block gas limit.
 - `on_claim_transfer(account_id, previous_last_claims, amount) -> bool` — private callback.
 
 Only full intervals are paid. A claim advances the timestamp by `periods * interval`, so
-partial time carries over. Minting starts accrual at mint time; burning forfeits unclaimed
-salary. Salary and interval changes are retroactive to unclaimed elapsed time, so claim
-before reconfiguring payroll if that matters.
+partial time carries over. Minting starts accrual at mint time; burning forfeits that holder's
+unclaimed salary. Holders of the same role accrue independently. Salary and interval changes are
+retroactive to unclaimed elapsed time, so claim before reconfiguring payroll if that matters.
 
 The payout calls the salary token's `ft_transfer` with 1 yoctoNEAR attached. On failure, the
 private callback restores the previous timestamps so the member can retry.
@@ -91,14 +97,16 @@ Implemented reads and enumeration:
 
 The transfer entry points (`mt_transfer`, `mt_batch_transfer`, `mt_transfer_call`,
 `mt_batch_transfer_call`) always panic with `role NFTs are non-transferable`. Approvals are
-not implemented because memberships are not transferable.
+not implemented because memberships are not transferable. `mt_supply` returns the holder count
+for a configured role (`Some(0)` when empty) and `None` for an unknown role; `mt_tokens`
+enumerates configured roles, not memberships.
 
 ## Events
 
 Mints and burns emit NEP-297 `nep245` events:
 
 ```json
-EVENT_JSON:{"standard":"nep245","version":"1.0.0","event":"mt_mint","data":[{"owner_id":"alice.testnet","token_ids":["2355721957:alice.testnet"],"amounts":["1"]}]}
+EVENT_JSON:{"standard":"nep245","version":"1.0.0","event":"mt_mint","data":[{"owner_id":"alice.testnet","token_ids":["10117748766825055253"],"amounts":["1"]}]}
 ```
 
 Burns use event `mt_burn` and include `authorized_id` when the caller is not the member.
@@ -130,8 +138,9 @@ near call rbac.testnet claim \
 ## Limitations
 
 - Not audited.
-- 32-bit role ids; collisions are detected at configuration time.
-- Maximum 32 roles per account.
+- 64-bit role ids; collisions are detected at configuration time.
+- Maximum 32 roles per account. `MAX_ROLES_PER_ACCOUNT` is a compile-time constant; raising it
+  requires a rebuild/redeploy and increases the per-account `claim` gas and response size.
 - Roles cannot be renamed or deleted.
 - Burning forfeits unclaimed salary.
 - Payouts require the contract to hold the salary token and the member to be registered with

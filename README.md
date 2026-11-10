@@ -7,7 +7,8 @@ Astro web app for deploying and managing contracts.
 
 The contract is designed to be owned by a Sputnik DAO or Trezu account. Each role is
 represented by a non-transferable NFT membership. Role owners can mint and burn memberships,
-other contracts can query `has_role`, and members can claim salary in any NEP-141 token.
+other contracts can query `has_role`, and members can claim salary in the configured NEP-141
+token.
 
 ```
                      owns / governs
@@ -41,6 +42,7 @@ other contracts can query `has_role`, and members can claim salary in any NEP-14
 - [Salary model](#salary-model)
 - [Using roles from another contract](#using-roles-from-another-contract)
 - [Factory and web app](#factory-and-web-app)
+- [Production: global contract by hash](#production-global-contract-by-hash)
 - [OIDC provider](#oidc-provider)
 - [Security model](#security-model)
 - [Limitations](#limitations)
@@ -71,11 +73,11 @@ other contracts can query `has_role`, and members can claim salary in any NEP-14
 ├── contracts/rbac-nft/            # NEP-245 role NFT + salary contract
 │   └── src/
 │       ├── lib.rs                 # Contract methods
-│       ├── metadata.rs            # NEP-245 metadata types
+│       ├── metadata.rs            # NEP-245 role-level metadata types
 │       ├── events.rs              # NEP-297 mt_mint / mt_burn events
-│       └── tests/                 # 76 unit tests
-├── contracts/rbac-factory/        # Factory, child wasm storage, deployment registry
-│   └── src/                       # deploy/set_code/registry + 24 tests
+│       └── tests/                 # 79 unit tests
+├── contracts/rbac-factory/        # Immutable factory and deployment registry
+│   └── src/                       # deploy/registry + 17 tests
 ├── services/oidc/                 # OIDC provider (axum)
 │   ├── src/                       # Config, NEP-413, RPC role source, JWT, handlers
 │   ├── tests/oidc_flow.rs         # 14 end-to-end HTTP tests
@@ -84,7 +86,8 @@ other contracts can query `has_role`, and members can claim salary in any NEP-14
 ├── services/web/                  # Astro frontend (static, wallet-selector, no indexer)
 │   ├── src/                       # Page, orchestration, RPC/contract/favorites helpers
 │   └── tests/                     # 32 Vitest unit tests
-├── scripts/build-contract.sh      # Build both wasm artifacts into res/
+├── scripts/build-contract.sh      # Build/optimize both wasm artifacts into res/
+├── scripts/deploy-factory.sh      # Deploy the immutable factory with pinned child wasm
 └── .github/workflows/ci.yml
 ```
 
@@ -125,7 +128,9 @@ cargo build -p rbac-nft -p rbac-factory --target wasm32-unknown-unknown --releas
 ```
 
 The artifacts are `res/rbac_nft.wasm` and `res/rbac_factory.wasm` (the script also leaves
-them under `target/wasm32-unknown-unknown/release/`).
+them under `target/wasm32-unknown-unknown/release/`). The release profile uses `opt-level = "z"`,
+LTO, one codegen unit, abort-on-panic, overflow checks, and symbol stripping. If `wasm-opt` is on
+your `PATH`, the script also runs `wasm-opt -Oz`.
 
 ### Deploy
 
@@ -156,27 +161,30 @@ hand the contract to the DAO, call `set_owner` first while you still control the
 ### Deploy through the factory (recommended)
 
 The factory deploys `{name}.{factory}` in one wallet transaction and keeps a registry for
-discovery. Deploy the factory, upload the child wasm once, then let users deploy children:
+discovery. It is **immutable and trustless**: there is no owner, no `set_code`, and no withdrawal
+method. The rbac-nft wasm is supplied once in the `new(code)` init call and can never change.
 
 ```bash
-near deploy factory.testnet res/rbac_factory.wasm \
+# Creates rbac-factory.testnet and stores res/rbac_nft.wasm in one transaction.
+MASTER_ACCOUNT=dao.testnet ./scripts/deploy-factory.sh
+
+# Or with the legacy near-cli manually:
+near deploy rbac-factory.testnet res/rbac_factory.wasm \
   --initFunction new \
-  --initArgs '{"owner_id":"dao.testnet"}'
+  --initArgs "{\"code\":\"$(base64 -w0 res/rbac_nft.wasm)\"}" \
+  --initDeposit 5
 
-near call factory.testnet set_code \
-  "{\"code\":\"$(base64 -w0 res/rbac_nft.wasm)\"}" \
-  --accountId dao.testnet \
-  --deposit 6 \
-  --gas 300000000000000
-
-near view factory.testnet required_deploy_deposit
+near view rbac-factory.testnet required_deploy_deposit
+near view rbac-factory.testnet code_hash
 ```
 
-Each child stores its own copy of the wasm, so the deposit is roughly **5–6 NEAR** and is not a
+Each child stores its own copy of the wasm, so the deposit is roughly **3.9 NEAR** and is not a
 fee: the factory forwards it to the child. A child deployed by the factory has no protocol-level
-access key and is therefore immutable. See
+access key and is therefore immutable. Clients should pin `code_hash()` (or set
+`PUBLIC_EXPECTED_CHILD_CODE_HASH` in the web app) so they deploy against code they reviewed. See
 [`contracts/rbac-factory/README.md`](contracts/rbac-factory/README.md) for the full API and
-caveats.
+caveats, and [Production: global contract by hash](#production-global-contract-by-hash) for the
+lower-cost production path.
 
 ### Run the web app
 
@@ -236,40 +244,45 @@ executed by the DAO account.
 Role ids are stable across the contract, the OIDC service, and indexers:
 
 ```text
-role_id          = u32::from_be_bytes(SHA-256(role_name)[0..4])
-token_id         = "{role_id}:{account_id}"
-base_metadata_id = "{role_id}"          (decimal string)
+role_id          = u64::from_be_bytes(SHA-256(role_name)[0..8])
+token_id         = "role_id"              (decimal string)
+base_metadata_id = "role_id"              (decimal string)
 ```
 
-NEAR account ids cannot contain `:`, so the token-id encoding is unambiguous.
+Each role is **one token type**, not one token per membership. An account's membership is a
+balance of `1` on that token type, so `mt_balance_of` returns `0` or `1`, `mt_supply` returns the
+number of holders, and `mt_tokens` enumerates configured roles rather than memberships. Role
+metadata is role-level: `mt_token(...).owner_id` is `None` because the role has many holders.
 
 Documented test vectors:
 
-| Role name | `role_id` |
+| Role name | `role_id` / token id |
 | --- | ---: |
-| `admin` | `2355721957` |
-| `employee` | `802947447` |
-| `manager` | `1860478057` |
-| `hr.manager` | `1475994381` |
-| `Treasury` | `1793088973` |
+| `admin` | `10117748766825055253` |
+| `employee` | `3448633025363786332` |
+| `manager` | `7990692413185102085` |
+| `hr.manager` | `6339347599350065209` |
+| `Treasury` | `7701258499861874806` |
 
 Role names are case-sensitive (`Admin` and `admin` are different roles), must be non-empty,
-at most 64 bytes, and must not have surrounding whitespace or control characters. A 32-bit
-id can collide; the contract rejects a second role name that hashes to an existing id.
+at most 64 bytes, and must not have surrounding whitespace or control characters. A hash can
+still collide; the contract rejects a second role name that hashes to an existing id.
 
 JavaScript helper:
-
 ```js
 const crypto = require("node:crypto");
 
 function roleId(name) {
-  return crypto.createHash("sha256").update(name, "utf8").digest().readUInt32BE(0);
+  return crypto.createHash("sha256").update(name, "utf8").digest().readBigUInt64BE(0).toString();
 }
 
-function tokenId(name, accountId) {
-  return `${roleId(name)}:${accountId}`;
+function tokenId(name) {
+  return roleId(name);
 }
 ```
+
+Use strings, never JavaScript `number`, for ids above 2^53. The Rust contract exposes them as
+`U64`, which serializes as a decimal string for the same reason.
 
 ## Contract API
 
@@ -288,23 +301,23 @@ All amounts are `U128` and serialize as decimal strings. Timestamps are nanoseco
 | `set_role_salary(role, salary) -> RoleView` | contract owner | Creates a role or updates its salary. |
 | `set_role_owner(role, owner: Option<AccountId>) -> RoleView` | contract owner or effective role owner | Delegates/clears role administration. `None` falls back to the contract owner. |
 | `get_role(role) -> Option<RoleView>` | view | Role by name. |
-| `get_role_by_id(role_id) -> Option<RoleView>` | view | Role by id. |
+| `get_role_by_id(role_id: U64) -> Option<RoleView>` | view | Role by id. |
 | `get_roles(from_index?, limit?) -> Vec<RoleView>` | view | Paginated roles; default limit 50, maximum 100. |
 | `role_count() -> u32` | view | Number of configured roles. |
 
-`RoleView` contains `role_id`, `name`, effective `owner`, `configured_owner`, `salary`, and
-`holders`.
+`RoleView` contains `role_id` (a `U64` decimal string), `name`, effective `owner`,
+`configured_owner`, `salary`, and `holders`.
 
 ### Membership
 
 | Method | Auth | Description |
 | --- | --- | --- |
-| `mint_role(account_id, role) -> String` | contract owner or role owner | Mints a membership; returns the token id. Starts salary accrual at the current block timestamp. |
+| `mint_role(account_id, role) -> String` | contract owner or role owner | Mints a membership; returns the decimal role id / token id. Starts salary accrual at the current block timestamp. |
 | `burn_role(account_id, role)` | contract owner or role owner | Burns a membership. Access stops immediately and unclaimed salary is discarded. |
 | `has_role(account_id, role) -> bool` | view | Role-gated access check by name. |
-| `has_role_id(account_id, role_id) -> bool` | view | Role-gated access check by id. |
+| `has_role_id(account_id, role_id: U64) -> bool` | view | Role-gated access check by id. |
 | `roles_of(account_id) -> Vec<String>` | view | Sorted role names held by an account. |
-| `role_ids_of(account_id) -> Vec<u32>` | view | Sorted role ids held by an account. |
+| `role_ids_of(account_id) -> Vec<U64>` | view | Sorted role ids held by an account. |
 | `members_of(role) -> Vec<AccountId>` | view | Sorted members of a role. |
 
 Rules:
@@ -312,7 +325,11 @@ Rules:
 - A role must be configured with `set_role_salary` before it can be minted (a salary of `0`
   is allowed).
 - An account can hold a given role at most once.
-- An account can hold at most **32 roles**. This cap keeps `claim` inside the block gas limit.
+- An account can hold at most **32 roles**. The limit is configurable at build time via the
+  compile-time constant `MAX_ROLES_PER_ACCOUNT` in `contracts/rbac-nft/src/lib.rs`; it is not a
+  runtime or owner setting. 32 is deliberately conservative: `claim` loops over every role an
+  account holds, so the cap bounds gas use and response size. `claim_role` can claim one role at
+  a time. Raising the limit is possible but requires rebuilding and redeploying the contract.
 - Role ownership defaults to the contract owner. The role owner can transfer or clear its own
   role ownership; the contract owner can always manage any role.
 
@@ -342,12 +359,17 @@ The transfer methods (`mt_transfer`, `mt_batch_transfer`, `mt_transfer_call`,
 `"role NFTs are non-transferable"`. Approvals are intentionally not implemented because
 memberships cannot be transferred.
 
+Supply and enumeration follow the one-token-type-per-role model: `mt_supply(token_id)` is the
+current holder count for a configured role (`Some(0)` when nobody holds it) and `None` for an
+unknown role. Burning the last holder leaves the role configured, so the token type remains
+enumerable and can be minted again.
+
 ### Events
 
 Membership changes emit NEP-297 `nep245` events:
 
 ```json
-EVENT_JSON:{"standard":"nep245","version":"1.0.0","event":"mt_mint","data":[{"owner_id":"alice.testnet","token_ids":["2355721957:alice.testnet"],"amounts":["1"]}]}
+EVENT_JSON:{"standard":"nep245","version":"1.0.0","event":"mt_mint","data":[{"owner_id":"alice.testnet","token_ids":["10117748766825055253"],"amounts":["1"]}]}
 ```
 
 Burns are the same shape with event `mt_burn`; they include `authorized_id` when someone
@@ -365,6 +387,8 @@ other than the member triggered the burn.
   - claim at day 3.5 pays `1 × 10 = 10` and sets the timestamp to day 3.
 - Anyone can trigger `claim`; the transfer always goes to the member.
 - If nothing is due, `claim` returns `0` without creating a transfer.
+- Holders of the same role accrue independently: each membership has its own `(role_id, account)`
+  claim timestamp, and claiming or burning one holder does not change another holder's schedule.
 - Burning a role discards its unclaimed salary. Claim first if that matters.
 - Changing a role salary or the global interval applies retroactively to all **unclaimed**
   elapsed time. Claim before reconfiguring payroll if that is not desired.
@@ -432,18 +456,22 @@ The contract result is a JSON byte array in `result.result`; decode it with
 [`contracts/rbac-factory`](contracts/rbac-factory) lets anyone create an initialized
 `rbac-nft` as `{name}.{factory}` with a single transaction:
 
-1. The factory owner uploads the `rbac-nft` wasm once with
-   `set_code(code_base64)`, attaching enough deposit for storage.
-2. A deployer calls
-   `deploy(name, owner_id, salary_token, payout_interval_ns)` with at least
+1. The deployer initializes the factory once with the `rbac-nft` wasm:
+   `new(code_base64)`, attaching enough deposit for storage. The code is immutable from then on.
+2. A user calls `deploy(name, owner_id, salary_token, payout_interval_ns)` with at least
    `required_deploy_deposit()` and enough gas (150 Tgas minimum; the web app sends 300).
 3. The factory creates the account, deploys the wasm, funds it, and calls `new`.
 4. A private callback records the child only after initialization succeeds and emits a
    `rbac-factory` NEP-297 `deploy` event.
 
+There is no factory owner, no `set_code`, no `set_owner`, and no withdrawal method. Any deposit
+left in the factory is permanently locked; the factory only forwards the child's share on each
+deployment. `code_hash()` returns the SHA-256 of the stored wasm so clients can pin it.
+
 Registry views: `contract_count`, `get_contract`, `get_contracts`, `contracts_of_owner`, and
 `contracts_of_deployer`. `contracts_of_owner` uses the **deploy-time** owner; clients that need
-the current owner must query the child's `owner_id()`.
+the current owner must query the child's `owner_id()`. The documented default testnet factory is
+`rbac-factory.testnet`.
 
 Factory-deployed children have no protocol-level access key, so they cannot be upgraded or
 deleted. A failed initialization leaves an orphan account at the target id; retry with another
@@ -465,6 +493,42 @@ ownership transfer controls. Contract or role owners get mint/burn controls. All
 directly to NEAR JSON-RPC; no indexer is required. The registry is a discovery hint only: every
 displayed contract is re-checked on-chain, and favorites are scoped by network and account in
 `localStorage`.
+
+## Production: global contract by hash
+
+The factory in this repo deliberately keeps a **local per-child wasm**. The main reason we did not
+use the global-by-hash path for this hackathon deployment is funding: deploying the global
+contract burns roughly **38 NEAR** for the current wasm, and the testnet account used here does
+not have sufficient testnet NEAR for that. The local path only stakes a per-child deposit, which
+is forwarded to the child. It is also simple and keeps each child independent. The trade-off is
+storage: every child stores its own copy of the ~0.38 MiB rbac-nft wasm, so each deployment costs
+roughly 3.9 NEAR.
+
+The production path is a **global contract stored by hash** (NEP-591). A global contract is
+deployed once to the network and identified by its SHA-256 hash, and accounts can use it without
+storing another copy:
+
+- Deploy the reviewed rbac-nft wasm once as a global contract. The protocol burns the storage
+  cost of the code (roughly **~38 NEAR for 385 KiB** at 10× the normal storage byte cost) instead
+  of staking it.
+- The factory deploys each child with `DeployGlobalContractByHash` / a global-contract use
+  action (depending on the SDK helper) and then calls the child's `new`. The child's account
+  stores only its state and registry entry.
+- Break-even is roughly **10 children** compared with per-child local wasm. Beyond that the
+  global path is cheaper, and the code hash is a strong, user-verifiable commitment.
+
+Trade-offs:
+
+- The global contract is code-addressed, not account-addressed. A child cannot be upgraded to a
+  different global contract without the owner's key, and the factory remains keyless.
+- `DeployGlobalContractByAccountId` (the named variant) is a different trade-off: it gives the
+  code a human-readable account but is not content-addressed the same way. Prefer by-hash for
+  trustless factories.
+- The hash must be pinned in the factory and in the frontend (`PUBLIC_EXPECTED_CHILD_CODE_HASH`)
+  so users are not tricked into deploying unreviewed code.
+- This repository ships the local per-child path because the global deployment is not funded on
+  testnet. The global-by-hash path remains the documented production upgrade; the current factory
+  API stays stable enough to swap the deploy promise construction once the deployment is funded.
 
 ## OIDC provider
 
@@ -607,16 +671,19 @@ See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed ser
 - Only the contract owner or the effective role owner can mint/burn a role or change that
   role's owner.
 - Role NFTs cannot be transferred; transfer entry points panic.
-- Token ids bind the role id and account id, and the contract checks token ownership before
-  returning a role.
+- A membership is a balance of `1` on a role token; the contract checks the holder list and
+  claim timestamp for the exact `(role id, account)` pair.
 - Salary transfers use a private callback; only the contract itself can call it.
 - Claim arithmetic uses checked multiplication/addition and integer interval math.
 
 **Factory and web app**
 
-- Only the factory owner can upload/replace the child wasm or withdraw surplus balance.
+- The factory is immutable and keyless: no owner, no code replacement, no withdrawal. The
+  rbac-nft wasm is fixed at `new(code)`.
 - The factory does not add a key to children, so a deployment cannot be upgraded or deleted by
   the factory. The configured owner controls contract methods.
+- `code_hash()` exposes the child wasm hash. The web app can pin it with
+  `PUBLIC_EXPECTED_CHILD_CODE_HASH` and refuses to deploy on a mismatch.
 - The registry is not an ownership oracle. The web app verifies `owner_id()` on the child before
   showing a contract as owned and never grants UI permissions from registry data alone.
 - Wallet writes are signed by the user's wallet; the app never handles private keys.
@@ -642,17 +709,6 @@ See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed ser
 - `/userinfo` and `/introspect` re-read roles from the chain and revoke a session when the
   client's required roles disappear.
 
-**Factory and web app**
-
-- Only the factory owner can upload/replace the child wasm or withdraw surplus balance.
-- The factory does not add a key to children, so a deployment cannot be upgraded or deleted by
-  the factory. The configured owner controls contract methods.
-- The registry is not an ownership oracle. The web app verifies `owner_id()` on the child before
-  showing a contract as owned and never grants UI permissions from registry data alone.
-- Wallet writes are signed by the user's wallet; the app never handles private keys.
-- Favorites are stored locally and only filter display. They do not affect on-chain state.
-- RPC read results are trusted, as with any dApp. Use a reputable endpoint.
-
 **Operational**
 
 - Use HTTPS for the issuer; never expose the signing key.
@@ -671,9 +727,11 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 **Contract**
 
 - Not audited. Use with real funds only after review.
-- Role ids are 32-bit hashes. Collisions are detected when configuring a role, but there is no
+- Role ids are 64-bit hashes. Collisions are detected when configuring a role, but there is no
   global registry across contracts.
-- An account can hold at most 32 roles.
+- An account can hold at most 32 roles. `MAX_ROLES_PER_ACCOUNT` is a compile-time constant, not a
+  runtime setting; raising it requires rebuilding and redeploying, and increases the per-account
+  `claim` gas and response size.
 - Roles cannot be renamed or deleted. Salary/interval changes are retroactive to unclaimed
   time.
 - Burning a role forfeits its unclaimed salary.
@@ -694,14 +752,19 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 - Children deployed through the factory are immutable because they have no access keys. Plan
   for upgrades before using it for a long-lived production contract.
 - Every child stores a full copy of the wasm, so deployment is storage-heavy. The required
-  deposit is roughly 5–6 NEAR at current prices.
+  deposit is roughly 3.9 NEAR at current prices. The documented global-by-hash upgrade removes
+  this per-child cost, but it was not used here because deploying the global contract burns
+  roughly 38 NEAR and the testnet account lacks sufficient testnet NEAR.
+- Any deposit left in the immutable factory after a deployment is permanently locked because
+  there is no withdrawal method.
 - The registry is append-only and does not track ownership changes or deletion.
 - The web app scans the whole registry and makes one or more RPC reads per child. This is fine
   for small registries but grows linearly; an indexer is the next step for scale.
 - Reads have a 20-second timeout. A failed child read is treated as not-owned/no-roles for that
   contract instead of failing the whole scan.
 - Token metadata is best-effort; missing metadata falls back to raw units.
-- The frontend is not audited and does not pin/verify the factory wasm hash.
+- Hash pinning is opt-in (`PUBLIC_EXPECTED_CHILD_CODE_HASH`); without it the app displays the
+  factory's hash but does not verify it against a value you reviewed.
 
 **OIDC**
 
@@ -732,17 +795,18 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 cargo test --workspace
 ```
 
-The Rust workspace currently has **152 tests**, and the web app has **32 Vitest tests**
-(**184 total**):
+The Rust workspace currently has **148 tests**, and the web app has **32 Vitest tests**
+(**180 total**):
 
 - `crates/rbac-common`: 6 tests covering role hashing, token-id encoding, documented vectors,
   and role-name validation.
-- `contracts/rbac-nft`: 76 tests covering initialization/admin permissions, role creation,
+- `contracts/rbac-nft`: 79 tests covering initialization/admin permissions, role creation,
   delegation, mint/burn, membership queries, NEP-245 reads/enumeration/metadata, salary
-  accrual, partial intervals, claim callbacks, and the non-transferable entry points.
-- `contracts/rbac-factory`: 24 tests covering code upload/storage, name and gas/deposit
-  validation, child creation receipts, callback registration/failure, duplicate protection,
-  registry pagination, owner/deployer indexes, and owner-only administration.
+  accrual, partial intervals, independent holder claims, claim callbacks, and the
+  non-transferable entry points.
+- `contracts/rbac-factory`: 17 tests covering immutable initialization and code hashing, name
+  and gas/deposit validation, child creation receipts, callback registration/failure, duplicate
+  protection, and registry pagination/indexes.
 - `services/oidc`: 32 unit tests covering config validation (including the example config),
   RSA/JWKS, NEP-413 serialization and signatures, role-result decoding, and handler helpers.
 - `services/oidc/tests/oidc_flow.rs`: 14 end-to-end HTTP tests covering discovery, JWKS,
@@ -758,7 +822,7 @@ Lint and wasm checks:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo build -p rbac-nft -p rbac-factory --target wasm32-unknown-unknown --release
+./scripts/build-contract.sh
 
 cd services/web && npm test && npm run check && npm run build
 ```

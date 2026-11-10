@@ -13,6 +13,7 @@ const OWNER_ID: &str = "dao.test.near";
 const DEPLOYER_ID: &str = "alice.test.near";
 const SALARY_TOKEN_ID: &str = "salary.test.near";
 const INTERVAL_NS: u64 = 604_800_000_000_000;
+const TEST_CODE: [u8; 5] = [0x00, 0x61, 0x73, 0x6d, 0x01];
 
 fn account(id: &str) -> AccountId {
     id.parse().expect("valid test account id")
@@ -65,16 +66,17 @@ fn set_env_with_results(predecessor: &str, results: Vec<PromiseResult>) {
     );
 }
 
+fn factory_with_code(code: Vec<u8>) -> Contract {
+    set_env(DEPLOYER_ID, NearToken::from_near(1));
+    Contract::new(Base64VecU8::from(code))
+}
+
 fn new_factory() -> Contract {
-    set_env(OWNER_ID, NearToken::from_yoctonear(0));
-    Contract::new(owner())
+    factory_with_code(TEST_CODE.to_vec())
 }
 
 fn with_code() -> Contract {
-    let mut factory = new_factory();
-    set_env(OWNER_ID, NearToken::from_near(1));
-    factory.set_code(Base64VecU8::from(vec![0x00, 0x61, 0x73, 0x6d, 0x01]));
-    factory
+    new_factory()
 }
 
 fn deploy(factory: &mut Contract, name: &str) -> near_sdk::Promise {
@@ -119,61 +121,31 @@ fn record(factory: &Contract, name: &str) -> crate::ContractRecord {
 }
 
 #[test]
-fn initializes_factory() {
+fn initializes_factory_with_immutable_code() {
     let factory = new_factory();
-    assert_eq!(factory.owner_id(), owner());
-    assert_eq!(factory.code_len(), U64(0));
+    assert_eq!(factory.code_len(), U64(TEST_CODE.len() as u64));
     assert_eq!(factory.contract_count(), 0);
-}
-
-#[test]
-fn set_code_stores_code_and_hash() {
-    let mut factory = new_factory();
-    set_env(OWNER_ID, NearToken::from_near(1));
-    factory.set_code(Base64VecU8::from(b"abc".to_vec()));
-
-    assert_eq!(factory.code_len(), U64(3));
     assert_eq!(
         factory.code_hash(),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        "42fd6e7502a18143f0c206c99f1e0787fbcac6b1c5f9969a4cb0d2f7035d07e3"
     );
+    assert_eq!(factory.code_hash(), new_factory().code_hash());
 }
 
 #[test]
-fn set_code_requires_owner() {
-    let mut factory = new_factory();
-    set_env(DEPLOYER_ID, NearToken::from_near(1));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        factory.set_code(Base64VecU8::from(vec![1, 2, 3]));
-    }));
-    assert!(result.is_err());
-}
-
-#[test]
-fn set_code_requires_storage_deposit() {
-    let mut factory = new_factory();
+fn new_requires_storage_deposit() {
     set_env(OWNER_ID, NearToken::from_yoctonear(0));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        factory.set_code(Base64VecU8::from(vec![1, 2, 3]));
+        Contract::new(Base64VecU8::from(TEST_CODE.to_vec()));
     }));
     assert!(result.is_err());
 }
 
 #[test]
-fn set_code_rejects_empty_code() {
-    let mut factory = new_factory();
+fn new_rejects_empty_code() {
     set_env(OWNER_ID, NearToken::from_near(1));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        factory.set_code(Base64VecU8::from(Vec::new()));
-    }));
-    assert!(result.is_err());
-}
-
-#[test]
-fn deploy_requires_configured_code() {
-    let mut factory = new_factory();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = deploy(&mut factory, "acme");
+        Contract::new(Base64VecU8::from(Vec::new()));
     }));
     assert!(result.is_err());
 }
@@ -417,75 +389,16 @@ fn registry_indexes_owner_and_deployer() {
 
 #[test]
 fn required_deposit_accounts_for_code_and_reserves() {
-    let mut factory = new_factory();
-    let empty = factory.required_deploy_deposit().0;
+    let small = factory_with_code(vec![0u8; 5]).required_deploy_deposit().0;
+    let large = factory_with_code(vec![0u8; 1_005])
+        .required_deploy_deposit()
+        .0;
 
-    set_env(OWNER_ID, NearToken::from_near(1));
-    factory.set_code(Base64VecU8::from(vec![0u8; 1_000]));
-    let with_code = factory.required_deploy_deposit().0;
-
-    assert!(with_code > empty);
+    assert!(large > small);
     assert_eq!(
-        with_code - empty,
+        large - small,
         near_sdk::env::storage_byte_cost().as_yoctonear() * 1_000
     );
-}
-
-#[test]
-fn owner_can_transfer_factory_ownership() {
-    let mut factory = new_factory();
-    let new_owner = account("new-owner.test.near");
-    set_env(OWNER_ID, NearToken::from_yoctonear(0));
-    factory.set_owner(new_owner.clone());
-    assert_eq!(factory.owner_id(), new_owner);
-
-    set_env(DEPLOYER_ID, NearToken::from_yoctonear(0));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        factory.set_owner(deployer());
-    }));
-    assert!(result.is_err());
-}
-
-#[test]
-fn owner_can_withdraw_surplus() {
-    let mut factory = new_factory();
-    let beneficiary = account("beneficiary.test.near");
-    set_env(OWNER_ID, NearToken::from_yoctonear(0));
-    let _ = factory.withdraw(beneficiary.clone(), U128(1_000));
-
-    let receipts = get_created_receipts();
-    assert!(receipts.iter().any(|receipt| {
-        receipt.receiver_id == beneficiary
-            && receipt.actions.iter().any(|action| {
-                matches!(
-                    action,
-                    MockAction::Transfer { deposit, .. } if deposit.as_yoctonear() == 1_000
-                )
-            })
-    }));
-}
-
-#[test]
-fn withdraw_rejects_amount_above_surplus() {
-    let mut factory = new_factory();
-    set_env(OWNER_ID, NearToken::from_yoctonear(0));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = factory.withdraw(
-            account("beneficiary.test.near"),
-            U128(NearToken::from_near(101).as_yoctonear()),
-        );
-    }));
-    assert!(result.is_err());
-}
-
-#[test]
-fn non_owner_cannot_withdraw() {
-    let mut factory = new_factory();
-    set_env(DEPLOYER_ID, NearToken::from_yoctonear(0));
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = factory.withdraw(account("beneficiary.test.near"), U128(0));
-    }));
-    assert!(result.is_err());
 }
 
 #[test]

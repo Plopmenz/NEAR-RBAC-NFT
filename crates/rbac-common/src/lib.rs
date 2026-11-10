@@ -1,14 +1,13 @@
 //! Stable role identifiers shared by the on-chain RBAC contract and off-chain services.
 //!
 //! NEP-245 identifies tokens with a string `token_id` and groups them with a base-metadata
-//! identifier. This project uses the 32-bit hash of the role name as the base-metadata id, and
-//! encodes tokens as `{role_id}:{account_id}`. Account ids may not contain `:`, so the encoding is
-//! unambiguous.
+//! identifier. This project uses one token type per role: the decimal representation of the
+//! 64-bit role id is both the token id and the base-metadata id.
 //!
-//! The hash is the first four bytes (big-endian) of `SHA-256(role_name)`. It is deliberately
+//! The role id is the first eight bytes (big-endian) of `SHA-256(role_name)`. It is deliberately
 //! stable and documented: the contract, OIDC service, indexers, and clients must all derive the
-//! same role id. A 32-bit id can collide; the contract detects collisions when a role is first
-//! configured and refuses to merge two different role names.
+//! same role id. The contract still detects collisions when a role is first configured and
+//! refuses to merge two different role names.
 
 use sha2::{Digest, Sha256};
 
@@ -63,40 +62,36 @@ pub fn validate_role_name(role: &str) -> Result<(), RoleNameError> {
     Ok(())
 }
 
-/// Returns the stable 32-bit id of a role name.
+/// Returns the stable 64-bit id of a role name.
 ///
-/// This is `u32::from_be_bytes(SHA-256(role_name)[0..4])`.
-pub fn role_id(role: &str) -> u32 {
+/// This is `u64::from_be_bytes(SHA-256(role_name)[0..8])`.
+pub fn role_id(role: &str) -> u64 {
     let digest = Sha256::digest(role.as_bytes());
-    u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]])
+    u64::from_be_bytes([
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+    ])
 }
 
-/// Encodes a role id and account id into the NEP-245 token id used by the contract.
-pub fn token_id_from_role_id(role_id: u32, account_id: &str) -> String {
-    format!("{role_id}:{account_id}")
-}
-
-/// Encodes a role name and account id into the NEP-245 token id used by the contract.
-pub fn token_id(role: &str, account_id: &str) -> String {
-    token_id_from_role_id(role_id(role), account_id)
-}
-
-/// Decodes a token id into its role id and account id.
+/// Returns the NEP-245 token id for a role.
 ///
-/// Returns `None` for malformed token ids. The account id is not validated here; the contract
-/// validates it on writes and the NEAR runtime validates account ids in JSON arguments.
-pub fn parse_token_id(token_id: &str) -> Option<(u32, &str)> {
-    let (role, account) = token_id.split_once(':')?;
-    if role.is_empty() || account.is_empty() || account.contains(':') {
-        return None;
-    }
-    let role_id = role.parse::<u32>().ok()?;
-    Some((role_id, account))
+/// The token id is the decimal representation of the role id. An account's membership in a role
+/// is a balance of `1` on this token type, not a separate token.
+pub fn token_id(role_id: u64) -> String {
+    role_id.to_string()
 }
 
 /// Returns the base-metadata id used for a role by the NEP-245 metadata extension.
-pub fn base_metadata_id(role_id: u32) -> String {
-    role_id.to_string()
+///
+/// It is the same value as the token id.
+pub fn base_metadata_id(role_id: u64) -> String {
+    token_id(role_id)
+}
+
+/// Parses the decimal role id out of a token id.
+///
+/// Returns `None` for malformed token ids.
+pub fn parse_token_id(token_id: &str) -> Option<u64> {
+    token_id.parse::<u64>().ok()
 }
 
 #[cfg(test)]
@@ -105,11 +100,11 @@ mod tests {
 
     #[test]
     fn role_ids_match_documented_test_vectors() {
-        assert_eq!(role_id("admin"), 2_355_721_957);
-        assert_eq!(role_id("employee"), 802_947_447);
-        assert_eq!(role_id("manager"), 1_860_478_057);
-        assert_eq!(role_id("hr.manager"), 1_475_994_381);
-        assert_eq!(role_id("Treasury"), 1_793_088_973);
+        assert_eq!(role_id("admin"), 10_117_748_766_825_055_253);
+        assert_eq!(role_id("employee"), 3_448_633_025_363_786_332);
+        assert_eq!(role_id("manager"), 7_990_692_413_185_102_085);
+        assert_eq!(role_id("hr.manager"), 6_339_347_599_350_065_209);
+        assert_eq!(role_id("Treasury"), 7_701_258_499_861_874_806);
     }
 
     #[test]
@@ -119,24 +114,27 @@ mod tests {
 
     #[test]
     fn token_id_round_trips() {
-        let id = token_id("admin", "alice.near");
-        assert_eq!(id, "2355721957:alice.near");
-        assert_eq!(parse_token_id(&id), Some((2_355_721_957, "alice.near")));
+        let id = token_id(role_id("admin"));
+        assert_eq!(id, "10117748766825055253");
+        assert_eq!(parse_token_id(&id), Some(role_id("admin")));
     }
 
     #[test]
     fn token_id_rejects_malformed_values() {
         assert_eq!(parse_token_id(""), None);
-        assert_eq!(parse_token_id("admin:alice.near"), None);
-        assert_eq!(parse_token_id("1:"), None);
-        assert_eq!(parse_token_id(":alice.near"), None);
-        assert_eq!(parse_token_id("1:alice.near:extra"), None);
-        assert_eq!(parse_token_id("4294967296:alice.near"), None);
+        assert_eq!(parse_token_id("admin"), None);
+        assert_eq!(parse_token_id("1:alice.near"), None);
+        assert_eq!(parse_token_id("-1"), None);
+        assert_eq!(parse_token_id("18446744073709551616"), None);
     }
 
     #[test]
-    fn base_metadata_id_is_decimal_role_id() {
-        assert_eq!(base_metadata_id(role_id("admin")), "2355721957");
+    fn base_metadata_id_is_the_token_id() {
+        assert_eq!(
+            base_metadata_id(role_id("admin")),
+            token_id(role_id("admin"))
+        );
+        assert_eq!(base_metadata_id(role_id("admin")), "10117748766825055253");
     }
 
     #[test]

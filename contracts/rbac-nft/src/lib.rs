@@ -13,9 +13,7 @@ use near_sdk::{
     env, ext_contract, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise,
     PromiseOrValue,
 };
-use rbac_common::{
-    base_metadata_id, parse_token_id, role_id, token_id_from_role_id, validate_role_name,
-};
+use rbac_common::{base_metadata_id, parse_token_id, role_id, token_id, validate_role_name};
 
 use crate::metadata::{
     MTBaseTokenMetadata, MTContractMetadata, MTRoleToken, MTTokenMetadata, MTTokenMetadataAll,
@@ -47,19 +45,11 @@ impl Role {
     }
 }
 
-/// Stored data for one role membership token.
-#[derive(BorshSerialize, BorshDeserialize, Clone, Debug, PartialEq, Eq)]
-pub struct TokenData {
-    pub role_id: u32,
-    pub owner: AccountId,
-    pub minted_at_ns: u64,
-}
-
 /// Public view of a role.
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoleView {
-    pub role_id: u32,
+    pub role_id: U64,
     pub name: String,
     /// Effective owner (falls back to the contract owner).
     pub owner: AccountId,
@@ -87,17 +77,15 @@ pub struct Contract {
     payout_interval_ns: u64,
 
     /// role id -> role configuration. Iterable for metadata/enumeration.
-    roles: IterableMap<u32, Role>,
+    roles: IterableMap<u64, Role>,
     /// role name -> role id, used for collision detection and lookups.
-    role_by_name: LookupMap<String, u32>,
-    /// token id -> token data. Iterable for NEP-245 enumeration.
-    tokens: IterableMap<String, TokenData>,
-    /// account -> token ids. Kept flat because the number of roles per account is capped.
-    owned_tokens: LookupMap<AccountId, Vec<String>>,
+    role_by_name: LookupMap<String, u64>,
+    /// account -> role ids. Kept flat because the number of roles per account is capped.
+    owned_tokens: LookupMap<AccountId, Vec<u64>>,
     /// role id -> member accounts. Used for role administration views.
-    role_holders: LookupMap<u32, Vec<AccountId>>,
-    /// token id -> last salary claim timestamp in nanoseconds.
-    last_claim: LookupMap<String, u64>,
+    role_holders: LookupMap<u64, Vec<AccountId>>,
+    /// (role id, account) -> last salary claim timestamp in nanoseconds.
+    last_claim: LookupMap<(u64, AccountId), u64>,
 }
 
 #[near]
@@ -117,7 +105,6 @@ impl Contract {
             payout_interval_ns: payout_interval_ns.0,
             roles: IterableMap::new(b"roles".as_slice()),
             role_by_name: LookupMap::new(b"role_names".as_slice()),
-            tokens: IterableMap::new(b"tokens".as_slice()),
             owned_tokens: LookupMap::new(b"owned_tokens".as_slice()),
             role_holders: LookupMap::new(b"role_holders".as_slice()),
             last_claim: LookupMap::new(b"last_claim".as_slice()),
@@ -162,7 +149,7 @@ impl Contract {
 
     /// Creates a role or updates its salary. Only the contract owner may call this.
     ///
-    /// Role names are hashed to a 32-bit id. If the id is already used by a different role name,
+    /// Role names are hashed to a 64-bit id. If the id is already used by a different role name,
     /// this panics rather than silently merging the roles.
     ///
     /// Salary changes apply retroactively to unclaimed time; claim before changing a salary if
@@ -213,11 +200,11 @@ impl Contract {
             .map(|config| self.role_view(role_id, config))
     }
 
-    /// Returns a role by its 32-bit role id, if configured.
-    pub fn get_role_by_id(&self, role_id: u32) -> Option<RoleView> {
+    /// Returns a role by its 64-bit role id, if configured.
+    pub fn get_role_by_id(&self, role_id: U64) -> Option<RoleView> {
         self.roles
-            .get(&role_id)
-            .map(|config| self.role_view(role_id, config))
+            .get(&role_id.0)
+            .map(|config| self.role_view(role_id.0, config))
     }
 
     /// Lists configured roles with pagination.
@@ -243,7 +230,7 @@ impl Contract {
     /// Mints a role NFT to `account_id`.
     ///
     /// Callable by the contract owner or the role owner. An account can hold each role at most
-    /// once. The token id is `{role_id}:{account_id}` and the base metadata id is the role id.
+    /// once. The token id is the decimal role id, and the balance for that token type is `1`.
     /// Minting starts salary accrual at the current block timestamp.
     pub fn mint_role(&mut self, account_id: AccountId, role: String) -> String {
         let role_id = role_id(&role);
@@ -258,9 +245,8 @@ impl Contract {
         );
         self.assert_can_manage_role(&config);
 
-        let token_id = token_id_from_role_id(role_id, account_id.as_str());
         require!(
-            !self.tokens.contains_key(&token_id),
+            !self.is_member(&account_id, role_id),
             "account already has this role"
         );
 
@@ -273,7 +259,7 @@ impl Contract {
             owned.len() < MAX_ROLES_PER_ACCOUNT,
             "account has reached the maximum number of roles"
         );
-        owned.push(token_id.clone());
+        owned.push(role_id);
         self.owned_tokens.insert(account_id.clone(), owned);
 
         let mut holders = self.role_holders.get(&role_id).cloned().unwrap_or_default();
@@ -281,16 +267,9 @@ impl Contract {
         self.role_holders.insert(role_id, holders);
 
         let now = env::block_timestamp();
-        self.tokens.insert(
-            token_id.clone(),
-            TokenData {
-                role_id,
-                owner: account_id.clone(),
-                minted_at_ns: now,
-            },
-        );
-        self.last_claim.insert(token_id.clone(), now);
+        self.last_claim.insert((role_id, account_id.clone()), now);
 
+        let token_id = token_id(role_id);
         events::emit_mint(&account_id, &token_id);
         token_id
     }
@@ -311,19 +290,13 @@ impl Contract {
             "role name hash collision; choose a different role name"
         );
         self.assert_can_manage_role(&config);
+        require!(
+            self.is_member(&account_id, role_id),
+            "account does not have this role"
+        );
 
-        let token_id = token_id_from_role_id(role_id, account_id.as_str());
-        let token = self
-            .tokens
-            .get(&token_id)
-            .cloned()
-            .unwrap_or_else(|| env::panic_str("account does not have this role"));
-        require!(token.owner == account_id, "token owner mismatch");
-
-        self.tokens.remove(&token_id);
-        self.last_claim.remove(&token_id);
         if let Some(mut owned) = self.owned_tokens.get(&account_id).cloned() {
-            owned.retain(|id| id != &token_id);
+            owned.retain(|id| *id != role_id);
             if owned.is_empty() {
                 self.owned_tokens.remove(&account_id);
             } else {
@@ -338,9 +311,11 @@ impl Contract {
                 self.role_holders.insert(role_id, holders);
             }
         }
+        self.last_claim.remove(&(role_id, account_id.clone()));
 
         let caller = env::predecessor_account_id();
         let authorized_id = (caller != account_id).then_some(caller);
+        let token_id = token_id(role_id);
         events::emit_burn(&account_id, &token_id, authorized_id);
     }
 
@@ -350,19 +325,15 @@ impl Contract {
     /// same token-id check at the start of their own methods (see README) or call this contract
     /// asynchronously before performing a gated action.
     pub fn has_role(&self, account_id: AccountId, role: String) -> bool {
-        self.has_role_id(account_id, role_id(&role))
+        self.has_role_id(account_id, U64(role_id(&role)))
     }
 
     /// Returns true when `account_id` holds the role identified by `role_id`.
     ///
-    /// `role_id` is `u32::from_be_bytes(SHA-256(role_name)[0..4])`; it is also the NEP-245 base
-    /// metadata id of the role.
-    pub fn has_role_id(&self, account_id: AccountId, role_id: u32) -> bool {
-        let token_id = token_id_from_role_id(role_id, account_id.as_str());
-        self.tokens
-            .get(&token_id)
-            .map(|token| token.owner == account_id)
-            .unwrap_or(false)
+    /// `role_id` is the first 8 bytes of `SHA-256(role_name)` as a big-endian `u64`; it is also
+    /// the NEP-245 token id and base metadata id of the role.
+    pub fn has_role_id(&self, account_id: AccountId, role_id: U64) -> bool {
+        self.is_member(&account_id, role_id.0)
     }
 
     /// Returns the human-readable roles held by an account. Used by the OIDC service.
@@ -372,8 +343,7 @@ impl Contract {
             .get(&account_id)
             .into_iter()
             .flatten()
-            .filter_map(|token_id| parse_token_id(token_id).map(|(role_id, _)| role_id))
-            .filter_map(|role_id| self.roles.get(&role_id).map(|role| role.name.clone()))
+            .filter_map(|role_id| self.roles.get(role_id).map(|role| role.name.clone()))
             .collect();
         roles.sort();
         roles.dedup();
@@ -381,16 +351,14 @@ impl Contract {
     }
 
     /// Returns the role ids held by an account.
-    pub fn role_ids_of(&self, account_id: AccountId) -> Vec<u32> {
-        let mut role_ids: Vec<u32> = self
+    pub fn role_ids_of(&self, account_id: AccountId) -> Vec<U64> {
+        let mut role_ids: Vec<u64> = self
             .owned_tokens
             .get(&account_id)
-            .into_iter()
-            .flatten()
-            .filter_map(|token_id| parse_token_id(token_id).map(|(role_id, _)| role_id))
-            .collect();
+            .cloned()
+            .unwrap_or_default();
         role_ids.sort_unstable();
-        role_ids
+        role_ids.into_iter().map(U64).collect()
     }
 
     /// Returns the members of a role.
@@ -432,8 +400,10 @@ impl Contract {
 
     /// Returns the last claim timestamp for an account's role, in nanoseconds.
     pub fn last_claim(&self, account_id: AccountId, role: String) -> Option<U64> {
-        let token_id = token_id_from_role_id(role_id(&role), account_id.as_str());
-        self.last_claim.get(&token_id).copied().map(U64)
+        self.last_claim
+            .get(&(role_id(&role), account_id))
+            .copied()
+            .map(U64)
     }
 
     /// Called by the salary token transfer promise. Restores claim timestamps if the transfer
@@ -442,7 +412,7 @@ impl Contract {
     pub fn on_claim_transfer(
         &mut self,
         account_id: AccountId,
-        previous_last_claims: Vec<(u32, u64)>,
+        previous_last_claims: Vec<(u64, u64)>,
         _amount: U128,
     ) -> bool {
         require!(
@@ -453,9 +423,9 @@ impl Contract {
             true
         } else {
             for (role_id, previous) in previous_last_claims {
-                let token_id = token_id_from_role_id(role_id, account_id.as_str());
-                if self.tokens.contains_key(&token_id) {
-                    self.last_claim.insert(token_id, previous);
+                if self.is_member(&account_id, role_id) {
+                    self.last_claim
+                        .insert((role_id, account_id.clone()), previous);
                 }
             }
             false
@@ -466,11 +436,14 @@ impl Contract {
     // NEP-245 core (read + non-transferable mutators)
     // ---------------------------------------------------------------------
 
-    /// NEP-245: returns tokens for the given token ids.
+    /// NEP-245: returns role tokens for the given token ids.
+    ///
+    /// A token id is the decimal role id. `owner_id` is `None` because a role token has many
+    /// holders; use `mt_balance_of` for a specific account.
     pub fn mt_token(&self, token_ids: Vec<String>) -> Vec<Option<MTRoleToken>> {
         token_ids
             .iter()
-            .map(|token_id| self.view_token(token_id))
+            .map(|token_id| parse_token_id(token_id).and_then(|role_id| self.view_token(role_id)))
             .collect()
     }
 
@@ -487,9 +460,18 @@ impl Contract {
             .collect()
     }
 
-    /// NEP-245: supply of a token id. Role NFTs have supply 0 or 1.
+    /// NEP-245: holder count of a configured role token.
+    ///
+    /// Returns `None` for an unknown role. A configured role with no holders has supply `0`.
     pub fn mt_supply(&self, token_id: String) -> Option<U128> {
-        self.tokens.contains_key(&token_id).then_some(U128(1))
+        let role_id = parse_token_id(&token_id)?;
+        self.roles.get(&role_id)?;
+        let holders = self
+            .role_holders
+            .get(&role_id)
+            .map(|holders| holders.len() as u128)
+            .unwrap_or(0);
+        Some(U128(holders))
     }
 
     /// NEP-245: batch supply.
@@ -562,18 +544,18 @@ impl Contract {
     // NEP-245 enumeration
     // ---------------------------------------------------------------------
 
-    /// NEP-245 enumeration: all tokens in the contract.
+    /// NEP-245 enumeration: all configured role tokens.
     pub fn mt_tokens(&self, from_index: Option<U128>, limit: Option<u32>) -> Vec<MTRoleToken> {
         let (from, limit) = pagination(from_index, limit);
-        self.tokens
+        self.roles
             .iter()
             .skip(from)
             .take(limit)
-            .filter_map(|(token_id, token)| self.view_token_with_data(token_id, token))
+            .filter_map(|(role_id, _)| self.view_token(*role_id))
             .collect()
     }
 
-    /// NEP-245 enumeration: tokens owned by an account.
+    /// NEP-245 enumeration: role tokens held by an account.
     pub fn mt_tokens_for_owner(
         &self,
         account_id: AccountId,
@@ -587,7 +569,7 @@ impl Contract {
             .flatten()
             .skip(from)
             .take(limit)
-            .filter_map(|token_id| self.view_token(token_id))
+            .filter_map(|role_id| self.view_token(*role_id))
             .collect()
     }
 
@@ -611,9 +593,8 @@ impl Contract {
         base_metadata_ids
             .iter()
             .map(|id| {
-                let role_id = id
-                    .parse::<u32>()
-                    .unwrap_or_else(|_| env::panic_str("invalid base metadata id"));
+                let role_id = parse_token_id(id)
+                    .unwrap_or_else(|| env::panic_str("invalid base metadata id"));
                 self.base_metadata_for_role(role_id)
             })
             .collect()
@@ -624,11 +605,9 @@ impl Contract {
         token_ids
             .iter()
             .map(|token_id| {
-                let token = self
-                    .tokens
-                    .get(token_id)
-                    .unwrap_or_else(|| env::panic_str("unknown token id"));
-                self.base_metadata_for_role(token.role_id)
+                let role_id =
+                    parse_token_id(token_id).unwrap_or_else(|| env::panic_str("unknown token id"));
+                self.base_metadata_for_role(role_id)
             })
             .collect()
     }
@@ -638,13 +617,11 @@ impl Contract {
         token_ids
             .iter()
             .map(|token_id| {
-                let token = self
-                    .tokens
-                    .get(token_id)
-                    .unwrap_or_else(|| env::panic_str("unknown token id"));
+                let role_id =
+                    parse_token_id(token_id).unwrap_or_else(|| env::panic_str("unknown token id"));
                 MTTokenMetadataAll {
-                    base: self.base_metadata_for_role(token.role_id),
-                    token: self.token_metadata(token),
+                    base: self.base_metadata_for_role(role_id),
+                    token: self.token_metadata(role_id),
                 }
             })
             .collect()
@@ -655,11 +632,9 @@ impl Contract {
         token_ids
             .iter()
             .map(|token_id| {
-                let token = self
-                    .tokens
-                    .get(token_id)
-                    .unwrap_or_else(|| env::panic_str("unknown token id"));
-                self.token_metadata(token)
+                let role_id =
+                    parse_token_id(token_id).unwrap_or_else(|| env::panic_str("unknown token id"));
+                self.token_metadata(role_id)
             })
             .collect()
     }
@@ -700,7 +675,7 @@ impl Contract {
     }
 
     /// Computes the role id and enforces collision safety for a role name.
-    fn get_or_create_role_id(&mut self, role_name: &str) -> u32 {
+    fn get_or_create_role_id(&mut self, role_name: &str) -> u64 {
         validate_role_name(role_name)
             .unwrap_or_else(|err| env::panic_str(&format!("invalid role name: {err}")));
         let id = role_id(role_name);
@@ -720,9 +695,9 @@ impl Contract {
         id
     }
 
-    fn role_view(&self, role_id: u32, config: &Role) -> RoleView {
+    fn role_view(&self, role_id: u64, config: &Role) -> RoleView {
         RoleView {
-            role_id,
+            role_id: U64(role_id),
             name: config.name.clone(),
             owner: config.effective_owner(&self.owner_id),
             configured_owner: config.owner.clone(),
@@ -735,28 +710,29 @@ impl Contract {
         }
     }
 
+    fn is_member(&self, account_id: &AccountId, role_id: u64) -> bool {
+        self.owned_tokens
+            .get(account_id)
+            .is_some_and(|roles| roles.contains(&role_id))
+    }
+
     fn balance_of(&self, account_id: &AccountId, token_id: &str) -> u128 {
-        self.tokens
-            .get(token_id)
-            .map(|token| u128::from(token.owner == *account_id))
+        parse_token_id(token_id)
+            .map(|role_id| u128::from(self.is_member(account_id, role_id)))
             .unwrap_or(0)
     }
 
-    fn view_token(&self, token_id: &str) -> Option<MTRoleToken> {
-        let token = self.tokens.get(token_id)?;
-        self.view_token_with_data(token_id, token)
-    }
-
-    fn view_token_with_data(&self, token_id: &str, token: &TokenData) -> Option<MTRoleToken> {
+    fn view_token(&self, role_id: u64) -> Option<MTRoleToken> {
+        self.roles.get(&role_id)?;
         Some(MTRoleToken {
-            token_id: token_id.to_owned(),
-            owner_id: Some(token.owner.clone()),
-            base_metadata_id: base_metadata_id(token.role_id),
-            token_metadata: None,
+            token_id: token_id(role_id),
+            owner_id: None,
+            base_metadata_id: base_metadata_id(role_id),
+            token_metadata: Some(self.token_metadata(role_id)),
         })
     }
 
-    fn base_metadata_for_role(&self, role_id: u32) -> MTBaseTokenMetadata {
+    fn base_metadata_for_role(&self, role_id: u64) -> MTBaseTokenMetadata {
         let role = self
             .roles
             .get(&role_id)
@@ -779,26 +755,32 @@ impl Contract {
         }
     }
 
-    fn token_metadata(&self, token: &TokenData) -> MTTokenMetadata {
+    fn token_metadata(&self, role_id: u64) -> MTTokenMetadata {
         let role = self
             .roles
-            .get(&token.role_id)
+            .get(&role_id)
             .unwrap_or_else(|| env::panic_str("unknown role id for token"));
+        let holders = self
+            .role_holders
+            .get(&role_id)
+            .map(|holders| holders.len())
+            .unwrap_or(0);
         let extra = near_sdk::serde_json::json!({
             "role": role.name,
-            "role_id": token.role_id,
+            "role_id": role_id.to_string(),
             "salary": role.salary.to_string(),
             "payout_interval_ns": self.payout_interval_ns.to_string(),
+            "holders": holders,
         });
         MTTokenMetadata {
             title: Some(format!("{} role", role.name)),
             description: Some(format!(
-                "Non-transferable membership token for role '{}' held by {}.",
-                role.name, token.owner
+                "Non-transferable membership token for role '{}'. Each holder has a balance of 1.",
+                role.name
             )),
             media: None,
             media_hash: None,
-            issued_at: Some((token.minted_at_ns / 1_000_000).to_string()),
+            issued_at: None,
             expires_at: None,
             starts_at: None,
             updated_at: None,
@@ -808,21 +790,22 @@ impl Contract {
         }
     }
 
-    fn claimable_for_internal(&self, account_id: &AccountId, role_filter: Option<u32>) -> u128 {
+    fn claimable_for_internal(&self, account_id: &AccountId, role_filter: Option<u64>) -> u128 {
         let now = env::block_timestamp();
         let interval = self.payout_interval_ns;
         let mut total = 0u128;
-        for token_id in self.owned_tokens.get(account_id).into_iter().flatten() {
-            let Some((role_id, owner)) = parse_token_id(token_id) else {
-                continue;
-            };
-            if owner != account_id.as_str() || role_filter.is_some_and(|filter| filter != role_id) {
+        for role_id in self.owned_tokens.get(account_id).into_iter().flatten() {
+            if role_filter.is_some_and(|filter| filter != *role_id) {
                 continue;
             }
-            let Some(role) = self.roles.get(&role_id) else {
+            let Some(role) = self.roles.get(role_id) else {
                 continue;
             };
-            let last = self.last_claim.get(token_id).copied().unwrap_or(now);
+            let last = self
+                .last_claim
+                .get(&(*role_id, account_id.clone()))
+                .copied()
+                .unwrap_or(now);
             let periods = now.saturating_sub(last) / interval;
             let amount = (periods as u128)
                 .checked_mul(role.salary)
@@ -837,11 +820,11 @@ impl Contract {
     fn claim_internal(
         &mut self,
         account_id: &AccountId,
-        role_filter: Option<u32>,
+        role_filter: Option<u64>,
     ) -> PromiseOrValue<U128> {
         let now = env::block_timestamp();
         let interval = self.payout_interval_ns;
-        let token_ids: Vec<String> = self
+        let role_ids: Vec<u64> = self
             .owned_tokens
             .get(account_id)
             .cloned()
@@ -849,17 +832,15 @@ impl Contract {
         let mut total = 0u128;
         let mut previous_last_claims = Vec::new();
 
-        for token_id in token_ids {
-            let Some((role_id, owner)) = parse_token_id(&token_id) else {
-                continue;
-            };
-            if owner != account_id.as_str() || role_filter.is_some_and(|filter| filter != role_id) {
+        for role_id in role_ids {
+            if role_filter.is_some_and(|filter| filter != role_id) {
                 continue;
             }
             let Some(role) = self.roles.get(&role_id).cloned() else {
                 continue;
             };
-            let last = self.last_claim.get(&token_id).copied().unwrap_or(now);
+            let key = (role_id, account_id.clone());
+            let last = self.last_claim.get(&key).copied().unwrap_or(now);
             let elapsed = now.saturating_sub(last);
             if elapsed < interval {
                 continue;
@@ -878,7 +859,7 @@ impl Contract {
                 .checked_add(amount)
                 .unwrap_or_else(|| env::panic_str("total claim overflow"));
 
-            self.last_claim.insert(token_id, next);
+            self.last_claim.insert(key, next);
             previous_last_claims.push((role_id, last));
         }
 
