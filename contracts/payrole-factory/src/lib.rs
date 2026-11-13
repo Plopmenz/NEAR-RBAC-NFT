@@ -121,10 +121,10 @@ impl Contract {
     /// [`Contract::required_deploy_deposit`]; excess is forwarded to the child. The caller must
     /// attach enough gas for the wasm deployment and initialization (at least 150 Tgas).
     ///
-    /// The factory registers the child only after its `new` call succeeds. A failed deployment
-    /// leaves an uninitialized account at the target id, because the factory has no key for the
-    /// new account and cannot delete it. Check the transaction outcome and use a different name
-    /// if that happens.
+    /// The factory registers the child only after its `new` call succeeds. Creation, wasm
+    /// deployment, funding, and initialization run in one receipt, so a failed initialization is
+    /// rolled back. The private callback then refunds the full attached deposit to the caller and
+    /// the subaccount name can be retried.
     #[payable]
     pub fn deploy(
         &mut self,
@@ -195,29 +195,29 @@ impl Contract {
             .then(
                 Self::ext(env::current_account_id())
                     .with_static_gas(DEPLOY_CALLBACK_GAS)
-                    .on_deploy(record),
+                    .on_deploy(record, U128(child_balance.as_yoctonear())),
             )
     }
 
     /// Private callback for [`Contract::deploy`]. Records the child only when initialization
     /// succeeded.
     ///
-    /// If initialization fails, the factory refunds its registry reserve to the deployer. The
-    /// forwarded child balance cannot be recovered: the child account exists without keys, and
-    /// the subaccount name cannot be reused.
+    /// If initialization fails, the factory refunds the full attached deposit (registry reserve
+    /// plus the balance forwarded to the child) to the deployer. The failed child receipt is
+    /// rolled back atomically, so the subaccount name can be reused.
     #[private]
-    pub fn on_deploy(&mut self, record: ContractRecord) -> bool {
+    pub fn on_deploy(&mut self, record: ContractRecord, child_balance: U128) -> bool {
         require!(
             env::promise_results_count() == 1,
             "expected exactly one promise result"
         );
         if env::promise_result_checked(0, 1_024).is_err() {
-            self.refund_reserve(&record.deployer_id);
+            self.refund_deposit(&record.deployer_id, child_balance.0);
             events::emit_deploy_failed(record.account_id.as_str(), "initialization failed");
             return false;
         }
         if self.records.contains_key(&record.account_id) {
-            self.refund_reserve(&record.deployer_id);
+            self.refund_deposit(&record.deployer_id, child_balance.0);
             events::emit_deploy_failed(record.account_id.as_str(), "already registered");
             return false;
         }
@@ -253,11 +253,14 @@ impl Contract {
         true
     }
 
-    /// Refunds the factory's registry reserve to the deployer after a failed registration.
-    fn refund_reserve(&self, deployer_id: &AccountId) {
-        let reserve = env::storage_byte_cost().saturating_mul(REGISTRY_RESERVE_BYTES);
-        if reserve.as_yoctonear() > 0 {
-            let _ = Promise::new(deployer_id.clone()).transfer(reserve);
+    /// Refunds the registry reserve plus the forwarded child balance after a failed deployment.
+    fn refund_deposit(&self, deployer_id: &AccountId, child_balance: u128) {
+        let reserve = env::storage_byte_cost()
+            .saturating_mul(REGISTRY_RESERVE_BYTES)
+            .as_yoctonear();
+        let refund = reserve.saturating_add(child_balance);
+        if refund > 0 {
+            let _ = Promise::new(deployer_id.clone()).transfer(NearToken::from_yoctonear(refund));
         }
     }
 

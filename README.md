@@ -730,8 +730,8 @@ The contract result is a JSON byte array in `result.result`; decode it with
 3. The factory creates the account, deploys the wasm, funds it, and calls `new` with its own
    account id as `factory_id`.
 4. A private callback records the child only after initialization succeeds and emits a
-   `payrole-factory` NEP-297 `deploy` event. On failure it refunds the registry reserve to the
-   deployer.
+   `payrole-factory` NEP-297 `deploy` event. On failure it refunds the full attached deposit to
+   the deployer.
 5. The child's `set_owner` calls the factory's `on_owner_changed`, which updates
    `ContractRecord.owner_id` and the `by_owner` index.
 
@@ -748,9 +748,9 @@ advisory discovery hint and hide unwanted entries with local favorites. `deploye
 the record for auditing. The documented default testnet factory is `payrole-factory.testnet`.
 
 Factory-deployed children have no protocol-level access key, so they cannot be upgraded or
-deleted. A failed initialization leaves an orphan account at the target id and burns the
-forwarded child deposit; the factory refunds its registry reserve and records nothing. Retry
-with another name.
+deleted. A failed initialization is rolled back atomically, including account creation and the
+forwarded child balance; the factory refunds the full attached deposit, records nothing, and the
+subaccount name can be retried.
 
 ### Web app
 
@@ -1064,9 +1064,9 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 
 **Factory and web app**
 
-- A failed child `new` call leaves an uninitialized account. The factory cannot delete it and
-  cannot retry the same name; it refunds the registry reserve, but the forwarded child deposit is
-  burned.
+- A failed child `new` call is rolled back atomically, so the target subaccount is not left
+  behind and the same `name` can be retried. The child is not added to the registry, and the
+  factory refunds the full attached deposit (registry reserve plus forwarded child balance).
 - Children deployed through the factory are immutable because they have no access keys. Plan
   for upgrades before using it for a long-lived production contract.
 - Every child stores a full copy of the wasm, so deployment is storage-heavy. The required
@@ -1143,7 +1143,7 @@ are **5 Docker-gated sandbox tests** (**213 total** when the sandbox job runs):
   permission helpers, local access-label mapping, PKCE S256 vectors, and the OIDC callback.
 - `contracts/*/tests/sandbox.rs`: 5 tests against a real NEAR sandbox (Docker) covering FT claim
   and burn payouts, failed-payout rollback, arbitrary-token withdrawal/liabilities, factory
-  deploy + registry + owner sync, and failed child initialization with a reserve refund.
+  deploy + registry + owner sync, and failed child initialization with a full deposit refund.
 
 Sandbox tests are opt-in because they need Docker and prebuilt wasm:
 

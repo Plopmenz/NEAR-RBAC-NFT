@@ -10,8 +10,8 @@
 //! ```
 //!
 //! The unit tests cover the registry bookkeeping with the mocked blockchain; these tests verify
-//! that subaccount deployment, child initialization, owner synchronization and reserve refunds
-//! work against a real runtime.
+//! that subaccount deployment, child initialization, owner synchronization and failed-deploy
+//! refunds work against a real runtime.
 
 use anyhow::{Context, Result};
 use near_sdk::json_types::Base64VecU8;
@@ -153,7 +153,7 @@ async fn deploy_registers_the_child_and_tracks_owner_changes() -> Result<()> {
 }
 
 #[tokio::test]
-async fn failed_child_initialization_is_not_registered_and_refunds_the_reserve() -> Result<()> {
+async fn failed_child_initialization_is_not_registered_and_refunds_the_deposit() -> Result<()> {
     let worker = near_workspaces::sandbox().await?;
     // The mock FT's `new(seed)` does not accept the PayRole init arguments, so the child init fails.
     let factory = deploy_factory(&worker, wasm("mock_ft.wasm")).await?;
@@ -186,8 +186,9 @@ async fn failed_child_initialization_is_not_registered_and_refunds_the_reserve()
     let count: u64 = factory.view("contract_count").await?.json()?;
     assert_eq!(count, 0, "a failed child must not enter the registry");
 
-    // The factory received the attached deposit but refunded its registry reserve, so its
-    // balance should not grow. The forwarded child balance is burned with the account.
+    // Initialization and the child receipt roll back atomically, so the factory still holds the
+    // whole attached deposit. The callback refunds the registry reserve plus the forwarded child
+    // balance, leaving the factory's balance unchanged.
     let after = factory.view_account().await?.balance;
     assert!(
         after <= before,

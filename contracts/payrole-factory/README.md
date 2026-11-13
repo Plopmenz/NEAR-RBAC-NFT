@@ -43,7 +43,7 @@ The factory is **trustless and immutable**:
 | `code_hash() -> String` | view | SHA-256 of the stored wasm as hex. |
 | `required_deploy_deposit() -> U128` | view | Deposit needed for one deployment at current storage prices. |
 | `deploy(name, owner_id, salary_token, payout_interval_ns) -> Promise` | payable | Deploys and initializes a child. Attach at least 150 Tgas. |
-| `on_deploy(...) -> bool` | private callback | Registers the child on success and refunds the registry reserve on failure. |
+| `on_deploy(...) -> bool` | private callback | Registers the child on success and refunds the full deposit on failure. |
 | `on_owner_changed(new_owner_id) -> bool` | registered child | Updates the child's `owner_id` and owner index after `set_owner`. |
 | `contract_count() -> u64` | view | Number of registered children. |
 | `get_contract(account_id) -> Option<ContractRecord>` | view | One registry entry. |
@@ -137,15 +137,15 @@ EVENT_JSON:{"standard":"payrole-factory","version":"1.0.0","event":"deploy","dat
 ```
 
 Failed initializations emit `deploy_failed` with the target account and a reason. Failed
-deployments are not registered, and the factory refunds its registry reserve to the deployer. The
-deposit forwarded to the child is burned with the uninitialized account.
+deployments are not registered, and the factory refunds the full attached deposit (registry
+reserve plus forwarded child balance) to the deployer. The failed child receipt is rolled back
+atomically, so no account is left behind and the name can be retried.
 
 ## Limitations
 
-- A failed child `new` call leaves an uninitialized account at the target id. The factory has no
-  key for the new account and therefore cannot delete or reinitialize it. The child is not added
-  to the registry, the factory's registry reserve is refunded, and the forwarded child deposit is
-  burned. Retry with a different `name`.
+- A failed child `new` call is rolled back atomically: the account is not left at the target id,
+  the child is not added to the registry, and the factory refunds the full attached deposit
+  (registry reserve plus forwarded child balance). The same `name` can be retried.
 - Factory-deployed children have no protocol-level access keys. They are immutable. If you need
   upgradeability, deploy manually or extend the factory to add a caller-provided key (and accept
   the associated custody risk).

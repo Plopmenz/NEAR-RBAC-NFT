@@ -86,7 +86,10 @@ fn deploy(factory: &mut Contract, name: &str) -> near_sdk::Promise {
 
 fn on_deploy(factory: &mut Contract, results: Vec<PromiseResult>, name: &str) -> bool {
     set_env_with_results(FACTORY_ID, results);
-    factory.on_deploy(make_record(name, owner(), deployer(), U64(1_000_000)))
+    factory.on_deploy(
+        make_record(name, owner(), deployer(), U64(1_000_000)),
+        U128(0),
+    )
 }
 
 fn make_record(
@@ -359,12 +362,10 @@ fn registry_indexes_current_owner() {
     // Deploy a second child for a different owner.
     let other_owner = account("other-dao.test.near");
     set_env_with_results(FACTORY_ID, vec![PromiseResult::Successful(vec![])]);
-    assert!(factory.on_deploy(make_record(
-        "two",
-        other_owner.clone(),
-        deployer(),
-        U64(2_000_000),
-    )));
+    assert!(factory.on_deploy(
+        make_record("two", other_owner.clone(), deployer(), U64(2_000_000)),
+        U128(0),
+    ));
 
     let by_owner = factory.contracts_of_owner(owner(), None, None);
     assert_eq!(by_owner.len(), 1);
@@ -410,18 +411,23 @@ fn on_owner_changed_rejects_unknown_callers() {
 }
 
 #[test]
-fn on_deploy_failure_refunds_the_registry_reserve() {
+fn on_deploy_failure_refunds_the_registry_reserve_and_child_balance() {
     let mut factory = with_code();
+    let child_balance = 12_345;
     set_env_with_results(FACTORY_ID, vec![PromiseResult::Failed]);
-    assert!(!factory.on_deploy(make_record("acme", owner(), deployer(), U64(1_000_000))));
+    assert!(!factory.on_deploy(
+        make_record("acme", owner(), deployer(), U64(1_000_000)),
+        U128(child_balance),
+    ));
 
     let receipts = get_created_receipts();
     let refund = receipts
         .iter()
         .find(|receipt| receipt.receiver_id == deployer())
         .expect("refund receipt to the deployer");
-    let expected =
-        near_sdk::env::storage_byte_cost().as_yoctonear() * crate::REGISTRY_RESERVE_BYTES;
+    let expected = near_sdk::env::storage_byte_cost().as_yoctonear()
+        * crate::REGISTRY_RESERVE_BYTES
+        + child_balance;
     assert_eq!(
         refund
             .actions
