@@ -1,9 +1,10 @@
 //! HTTP routes for the OIDC provider.
 
 use std::str::FromStr;
+use std::time::Duration;
 
 use axum::extract::{Form, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use url::Url;
 
 use crate::config::{ClientConfig, Config};
@@ -26,7 +28,8 @@ use crate::tokens;
 
 /// Builds the provider router.
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let cors = cors_layer(&state.config);
+    let router = Router::new()
         .route("/", get(index))
         .route("/healthz", get(health))
         .route("/.well-known/openid-configuration", get(discovery))
@@ -38,7 +41,36 @@ pub fn router(state: AppState) -> Router {
         .route("/userinfo", get(userinfo).post(userinfo))
         .route("/introspect", post(introspect))
         .route("/logout", post(logout))
-        .with_state(state)
+        .with_state(state);
+    match cors {
+        Some(cors) => router.layer(cors),
+        None => router,
+    }
+}
+
+/// Adds CORS when the operator configured browser origins.
+///
+/// OIDC authorization itself is a top-level redirect and does not need CORS. A static client
+/// such as the hosted PayRole web app does need CORS for discovery, `/token`, and `/userinfo`.
+fn cors_layer(config: &Config) -> Option<CorsLayer> {
+    if config.allowed_origins.is_empty() {
+        return None;
+    }
+    let origins: Vec<HeaderValue> = config
+        .allowed_origins
+        .iter()
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
+        .collect();
+    if origins.is_empty() {
+        return None;
+    }
+    Some(
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+            .max_age(Duration::from_secs(3600)),
+    )
 }
 
 // -------------------------------------------------------------------------
@@ -786,6 +818,7 @@ mod tests {
             signing_key_path: None,
             verify_access_key: true,
             allowed_scopes: vec!["openid".to_owned(), "profile".to_owned()],
+            allowed_origins: Vec::new(),
         };
         assert_eq!(
             normalize_scope(Some("openid profile openid"), &config, &client()).unwrap(),

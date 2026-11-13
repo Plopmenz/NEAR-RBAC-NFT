@@ -8,6 +8,18 @@ export interface AppConfig {
   explorerUrl: string;
   /** Absolute site URL used for canonical and social preview tags. Empty when unset. */
   siteUrl: string;
+  /** Demo NEP-141 salary token deployed by scripts/deploy-salary-token.sh. Empty when unset. */
+  salaryTokenId: string;
+  salaryTokenDecimals: number;
+  salaryTokenSymbol: string;
+  /** Human-readable amount minted by the free demo funding button. */
+  demoFundAmount: string;
+  /** OIDC issuer base URL, e.g. https://auth.example.com. Empty disables OIDC sign-in. */
+  oidcIssuer: string;
+  oidcClientId: string;
+  oidcScopes: string;
+  /** Registered redirect URI. Empty means `${window.location.origin}/oidc/callback` at runtime. */
+  oidcRedirectUri: string;
 }
 
 export interface FactoryContractRecord {
@@ -74,4 +86,17 @@ export interface FactoryInfo {
   codeHash: string;
   contractCount: number;
   requiredDeposit: string;
+}
+
+export interface OidcSession {
+  issuer: string;
+  clientId: string;
+  accessToken: string;
+  idToken: string;
+  userinfoEndpoint: string;
+  /** Unix milliseconds. */
+  expiresAt: number;
+  scope: string;
+  accountId: string;
+  roles: string[];
 }

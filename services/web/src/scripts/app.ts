@@ -1,4 +1,4 @@
-import { refreshFactory, restoreFromUrl, scanOwned, scanRoles, startWallet } from "./app/actions";
+import { refreshFactory, hydrateLocalState, restoreFromUrl, scanAccess, scanOwned, scanRoles, startWallet } from "./app/actions";
 import { byId } from "./app/dom";
 import { bindEvents } from "./app/events";
 import { state } from "./app/state";
@@ -7,6 +7,7 @@ import { renderAll } from "./app/views";
 async function init(): Promise<void> {
   byId<HTMLElement>("network-badge").textContent = state.config.network;
   bindEvents();
+  hydrateLocalState();
   restoreFromUrl();
   renderAll();
 
@@ -15,6 +16,9 @@ async function init(): Promise<void> {
   }
   if (state.tab === "roles" && state.rolesAddress) {
     void scanRoles();
+  }
+  if (state.tab === "access") {
+    void scanAccess();
   }
 
   void refreshFactory();

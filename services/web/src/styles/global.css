@@ -896,6 +896,19 @@ td .muted {
   margin-bottom: 0.3rem;
 }
 
+.access-card {
+  margin-bottom: 1rem;
+}
+
+.access-card .form-actions {
+  margin-top: 0.9rem;
+}
+
+.access-hint {
+  margin: 0 0 1rem;
+  max-width: 92ch;
+}
+
 .loading {
   display: inline-flex;
   align-items: center;

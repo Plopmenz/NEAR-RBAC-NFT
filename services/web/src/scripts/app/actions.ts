@@ -1,4 +1,5 @@
 import { childAccountId, isValidAccountId, subaccountNameError } from "../../lib/accounts";
+import { loadAccessMap, normalizeLabels, setRoleLabels } from "../../lib/access";
 import { CLAIM_GAS, DEPLOY_GAS, WRITE_GAS } from "../../lib/config";
 import {
   listFactoryContracts,
@@ -7,6 +8,13 @@ import {
 } from "../../lib/factory";
 import { loadFavorites, saveFavorites, toggleFavorite } from "../../lib/favorites";
 import { formatNear, parseNear, parseUnits } from "../../lib/format";
+import {
+  beginOidcLogin,
+  clearOidcSession,
+  oidcConfigured,
+  readOidcSession,
+  refreshOidcSession,
+} from "../../lib/oidc";
 import { loadMembershipContracts, loadOwnedContracts } from "../../lib/payrole";
 import { getFinalBlockTimestampNs } from "../../lib/rpc";
 import type { FactoryContractRecord } from "../../lib/types";
@@ -23,6 +31,7 @@ import { runtime, state, type Tab } from "./state";
 import {
   activeStatus,
   findSnapshot,
+  renderAccess,
   renderFactory,
   renderOwned,
   renderRoles,
@@ -43,10 +52,16 @@ export function updateUrl(): void {
   window.history.replaceState({}, "", url);
 }
 
+/** Loads browser-local access labels and the OIDC session after the app starts. */
+export function hydrateLocalState(): void {
+  state.accessMap = loadAccessMap(localStorage, state.config.network);
+  state.oidcSession = readOidcSession();
+}
+
 export function restoreFromUrl(): void {
   const params = new URLSearchParams(window.location.search);
   const tab = params.get("tab");
-  if (tab === "deploy" || tab === "contracts" || tab === "roles") {
+  if (tab === "deploy" || tab === "contracts" || tab === "roles" || tab === "access") {
     state.tab = tab;
   }
   const account = params.get("account")?.trim() ?? "";
@@ -207,6 +222,165 @@ export async function scanRoles(force = false): Promise<void> {
   }
 }
 
+export async function scanAccess(force = false): Promise<void> {
+  const status = byId<HTMLElement>("access-status");
+  state.oidcError = "";
+  let accountId = state.oidcSession?.accountId ?? state.walletAccount ?? "";
+  if (!accountId) {
+    state.accessMemberships = [];
+    state.accessScanned = false;
+    renderAccess();
+    setStatus(status, "Sign in with OIDC or connect a wallet to inspect access.", "error");
+    return;
+  }
+  if (!isValidAccountId(accountId)) {
+    state.accessMemberships = [];
+    state.accessScanned = false;
+    renderAccess();
+    setStatus(status, "The signed-in account id is not valid.", "error");
+    return;
+  }
+
+  const run = ++runtime.accessRun;
+  state.accessLoading = true;
+  state.accessScanned = false;
+  state.accessMemberships = [];
+  renderAccess();
+  setStatus(status, `Reading on-chain roles for ${accountId}…`);
+
+  try {
+    if (state.oidcSession) {
+      try {
+        state.oidcSession = await refreshOidcSession(state.oidcSession);
+        accountId = state.oidcSession.accountId;
+      } catch (error) {
+        state.oidcError = `Could not refresh the OIDC session: ${walletErrorMessage(error)}`;
+      }
+    }
+
+    const [records, blockTimestamp] = await Promise.all([
+      getRegistry(force),
+      latestBlockTimestamp(),
+    ]);
+    const memberships = await loadMembershipContracts(state.config.rpcUrl, records, accountId);
+    if (run !== runtime.accessRun) return;
+    state.blockTimestampNs = blockTimestamp;
+    state.accessMemberships = memberships;
+    state.accessScanned = true;
+    renderAccess();
+    const roleCount = memberships.reduce((total, item) => total + item.memberships.length, 0);
+    setStatus(
+      status,
+      records.length === 0
+        ? "The factory registry is empty. Deploy a contract first."
+        : `${accountId} holds ${roleCount} role(s) across ${memberships.length} contract(s).`,
+      "ok",
+    );
+  } catch (error) {
+    if (run !== runtime.accessRun) return;
+    state.accessMemberships = [];
+    state.accessScanned = true;
+    renderAccess();
+    setStatus(status, walletErrorMessage(error), "error");
+  } finally {
+    if (run === runtime.accessRun) {
+      state.accessLoading = false;
+      renderAccess();
+    }
+  }
+}
+
+export async function handleOidcLogin(): Promise<void> {
+  const status = byId<HTMLElement>("access-status");
+  if (!oidcConfigured(state.config)) {
+    setStatus(
+      status,
+      "OIDC is not configured. Set PUBLIC_OIDC_ISSUER and PUBLIC_OIDC_CLIENT_ID at build time.",
+      "error",
+    );
+    return;
+  }
+  try {
+    setStatus(status, "Opening the OIDC provider…");
+    await beginOidcLogin(state.config);
+  } catch (error) {
+    setStatus(status, `OIDC sign-in failed: ${walletErrorMessage(error)}`, "error");
+  }
+}
+
+export function handleOidcLogout(): void {
+  clearOidcSession();
+  state.oidcSession = null;
+  state.oidcError = "";
+  state.accessMemberships = [];
+  state.accessScanned = false;
+  renderAccess();
+  setStatus(byId<HTMLElement>("access-status"), "Signed out of OIDC.", "ok");
+}
+
+export async function handleFund(button: HTMLButtonElement): Promise<void> {
+  const contractId = button.dataset.contract ?? "";
+  const snapshot = findSnapshot(contractId);
+  const status = activeStatus();
+  if (!snapshot) {
+    setStatus(status, "Contract data is not loaded yet. Refresh and try again.", "error");
+    return;
+  }
+  if (!state.config.salaryTokenId || snapshot.salaryToken !== state.config.salaryTokenId) {
+    setStatus(status, "This contract does not use the configured demo salary token.", "error");
+    return;
+  }
+
+  let amount: bigint;
+  try {
+    const decimals =
+      snapshot.token.fallback && snapshot.salaryToken === state.config.salaryTokenId
+        ? state.config.salaryTokenDecimals
+        : snapshot.token.decimals;
+    amount = parseUnits(state.config.demoFundAmount, decimals);
+  } catch (error) {
+    setStatus(status, walletErrorMessage(error), "error");
+    return;
+  }
+  if (amount <= 0n) {
+    setStatus(status, "The demo funding amount must be positive.", "error");
+    return;
+  }
+
+  await executeWrite(
+    status,
+    `Fund ${contractId} with ${state.config.demoFundAmount} ${snapshot.token.symbol}`,
+    state.config.salaryTokenId,
+    "mint",
+    { account_id: contractId, amount: amount.toString() },
+  );
+}
+
+export function handleRoleAccess(form: HTMLFormElement): void {
+  const contractId = form.dataset.contract ?? "";
+  const data = new FormData(form);
+  const role = str(data.get("role")).trim();
+  if (!role) {
+    showNotice("Choose a role to configure.", "error");
+    return;
+  }
+  const labels = normalizeLabels(str(data.get("labels")));
+  state.accessMap = setRoleLabels(
+    localStorage,
+    state.config.network,
+    contractId,
+    role,
+    labels,
+  );
+  showNotice(
+    labels.length === 0
+      ? `Cleared OIDC access labels for ${role}.`
+      : `Saved ${labels.length} OIDC access label(s) for ${role}.`,
+  );
+  renderOwned();
+  renderAccess();
+}
+
 export function selectTab(tab: Tab): void {
   state.tab = tab;
   renderTabs();
@@ -216,6 +390,9 @@ export function selectTab(tab: Tab): void {
   }
   if (tab === "roles" && state.rolesAddress && !state.rolesScanned && !state.rolesLoading) {
     void scanRoles();
+  }
+  if (tab === "access" && !state.accessScanned && !state.accessLoading) {
+    void scanAccess();
   }
 }
 
@@ -240,6 +417,7 @@ export function updateWallet(accountId: string | null): void {
   // Admin controls depend on the connected account.
   renderOwned();
   renderRoles();
+  renderAccess();
 
   if (
     accountId &&
@@ -258,6 +436,15 @@ export function updateWallet(accountId: string | null): void {
     !state.rolesLoading
   ) {
     void scanRoles();
+  }
+  if (
+    accountId &&
+    state.tab === "access" &&
+    !state.oidcSession &&
+    !state.accessScanned &&
+    !state.accessLoading
+  ) {
+    void scanAccess();
   }
 }
 
@@ -302,6 +489,7 @@ async function executeWrite(
       void refreshFactory();
       if (state.tab === "contracts" && state.ownedAddress) void scanOwned(true);
       if (state.tab === "roles" && state.rolesAddress) void scanRoles(true);
+      if (state.tab === "access") void scanAccess(true);
     }, 1_800);
     return true;
   } catch (error) {

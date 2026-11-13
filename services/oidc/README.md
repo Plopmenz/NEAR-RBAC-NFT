@@ -61,6 +61,7 @@ Copy [`config.example.toml`](config.example.toml) to `config.toml` (git-ignored)
 | `store_sweep_interval_secs` | `60` | How often a background task prunes expired pending logins, codes and sessions. |
 | `verify_access_key` | `true` | Require the NEP-413 key to be an access key of the account. |
 | `allowed_scopes` | `["openid","profile","roles"]` | Must contain `openid`. |
+| `allowed_origins` | `[]` | Exact browser origins allowed to call discovery, `/token`, and `/userinfo` with CORS. No path, query, or trailing slash. |
 
 ### Client fields
 
@@ -75,6 +76,28 @@ Copy [`config.example.toml`](config.example.toml) to `config.toml` (git-ignored)
 
 Public clients (no secret) must use PKCE. Confidential clients can use
 `client_secret_basic` or `client_secret_post`.
+
+### Hosted PayRole web client
+
+The static web app in [`services/web`](../web) is a public PKCE client. It needs a client entry
+whose redirect URI is the exact callback page, and it needs CORS because discovery, `/token`,
+and `/userinfo` are browser `fetch` calls from another origin:
+
+```toml
+allowed_origins = ["https://near-payrole.vercel.app"]
+
+[[clients]]
+client_id = "payrole-web"
+name = "PayRole web"
+redirect_uris = ["https://near-payrole.vercel.app/oidc/callback"]
+required_roles = []
+```
+
+Keep `required_roles` empty so any wallet can sign in and inspect its own access; the app reads
+role NFTs from the registry itself and renders ✓ / ✗ for configured access labels. Add a role
+only if the login itself should be gated. For a different host, replace the origin and callback
+with that deployment's exact values, and set the matching `PUBLIC_OIDC_*` variables when building
+the web app.
 
 ## Running
 
@@ -209,6 +232,9 @@ ID token: the same identity fields plus `auth_time`, `sid`, optional `nonce`,
   confidential clients require matching client credentials. Protect the endpoint at the
   network layer if you need stronger isolation.
 - Keep the signing key secret and backed up. There is one key; rotation is manual.
+- `allowed_origins` is a browser CORS allow-list, not an authentication boundary. Requests
+  without an `Origin` header, server-to-server clients, and top-level redirects are unaffected.
+  Add only origins you control.
 - No per-IP rate limiting, consent UI, dynamic client registration, or audit logging is included.
   Add request rate limiting at the reverse proxy.
 
@@ -220,4 +246,5 @@ cargo test -p payrole-oidc
 
 This runs the unit tests and the end-to-end HTTP flow in `tests/oidc_flow.rs` (discovery,
 JWKS, PKCE, code binding/reuse/expiry, confidential clients, login signature/access-key
-checks, role requirements, live revocation, logout, and introspection).
+checks, role requirements, live revocation, logout, introspection, CORS, and the pending-login
+cap).

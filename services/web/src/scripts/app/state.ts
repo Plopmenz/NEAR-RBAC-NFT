@@ -1,16 +1,18 @@
 import type { WalletSelector } from "@near-wallet-selector/core";
 import type { WalletSelectorModal } from "@near-wallet-selector/modal-ui";
 
+import type { AccessMap } from "../../lib/access";
 import { loadConfig } from "../../lib/config";
 import type {
   AppConfig,
   FactoryContractRecord,
   FactoryInfo,
   MembershipContract,
+  OidcSession,
   OwnedContract,
 } from "../../lib/types";
 
-export type Tab = "deploy" | "contracts" | "roles";
+export type Tab = "deploy" | "contracts" | "roles" | "access";
 export type Tone = "muted" | "ok" | "error";
 
 export interface State {
@@ -32,10 +34,18 @@ export interface State {
   favorites: Set<string>;
   favoritesOnly: boolean;
   blockTimestampNs: bigint;
+  accessMap: AccessMap;
+  oidcSession: OidcSession | null;
+  oidcError: string;
+  accessMemberships: MembershipContract[];
+  accessLoading: boolean;
+  accessScanned: boolean;
 }
 
+const config = loadConfig();
+
 export const state: State = {
-  config: loadConfig(),
+  config,
   selector: null,
   modal: null,
   walletAccount: null,
@@ -53,6 +63,12 @@ export const state: State = {
   favorites: new Set(),
   favoritesOnly: false,
   blockTimestampNs: BigInt(Date.now()) * 1_000_000n,
+  accessMap: {},
+  oidcSession: null,
+  oidcError: "",
+  accessMemberships: [],
+  accessLoading: false,
+  accessScanned: false,
 };
 
 /**
@@ -63,12 +79,14 @@ export const runtime: {
   registryCache: { fetchedAt: number; records: FactoryContractRecord[] } | null;
   ownedRun: number;
   rolesRun: number;
+  accessRun: number;
   noticeTimer: number | undefined;
   lastAutoDeposit: string;
 } = {
   registryCache: null,
   ownedRun: 0,
   rolesRun: 0,
+  accessRun: 0,
   noticeTimer: undefined,
   lastAutoDeposit: "",
 };

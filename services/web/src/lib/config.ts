@@ -20,6 +20,7 @@ export function loadConfig(): AppConfig {
   const env = import.meta.env;
   const rawNetwork = (env.PUBLIC_NEAR_NETWORK ?? "testnet").toLowerCase();
   const network: NetworkId = rawNetwork === "mainnet" ? "mainnet" : "testnet";
+  const siteUrl = (env.PUBLIC_SITE_URL?.trim() || "").replace(/\/+$/, "");
 
   return {
     network,
@@ -30,8 +31,22 @@ export function loadConfig(): AppConfig {
       /\/+$/,
       "",
     ),
-    siteUrl: (env.PUBLIC_SITE_URL?.trim() || "").replace(/\/+$/, ""),
+    siteUrl,
+    salaryTokenId: env.PUBLIC_SALARY_TOKEN_ID?.trim() || "",
+    salaryTokenDecimals: parseDecimals(env.PUBLIC_SALARY_TOKEN_DECIMALS, 6),
+    salaryTokenSymbol: env.PUBLIC_SALARY_TOKEN_SYMBOL?.trim() || "MOCK",
+    demoFundAmount: env.PUBLIC_DEMO_FUND_AMOUNT?.trim() || "100",
+    oidcIssuer: (env.PUBLIC_OIDC_ISSUER?.trim() || "").replace(/\/+$/, ""),
+    oidcClientId: env.PUBLIC_OIDC_CLIENT_ID?.trim() || "",
+    oidcScopes: env.PUBLIC_OIDC_SCOPES?.trim() || "openid profile roles",
+    oidcRedirectUri:
+      env.PUBLIC_OIDC_REDIRECT_URI?.trim() || (siteUrl ? `${siteUrl}/oidc/callback` : ""),
   };
+}
+
+function parseDecimals(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 36 ? parsed : fallback;
 }
 
 /** 30 days in nanoseconds: the default deploy payout interval. */

@@ -123,10 +123,18 @@ struct TestApp {
 
 impl TestApp {
     fn new() -> Self {
-        Self::with_max_pending(10_000)
+        Self::with_options(10_000, Vec::new())
     }
 
     fn with_max_pending(max_pending_logins: usize) -> Self {
+        Self::with_options(max_pending_logins, Vec::new())
+    }
+
+    fn with_allowed_origins(allowed_origins: Vec<String>) -> Self {
+        Self::with_options(10_000, allowed_origins)
+    }
+
+    fn with_options(max_pending_logins: usize, allowed_origins: Vec<String>) -> Self {
         let config = Config {
             issuer: ISSUER.to_owned(),
             listen: "127.0.0.1:0".to_owned(),
@@ -165,6 +173,7 @@ impl TestApp {
                 "profile".to_owned(),
                 "roles".to_owned(),
             ],
+            allowed_origins,
         };
         config.validate().unwrap();
 
@@ -498,6 +507,40 @@ async fn discovery_and_jwks_describe_the_provider() {
     assert_eq!(jwks["keys"][0]["use"], "sig");
     assert_eq!(jwks["keys"][0]["kid"], app.state.keys.kid());
     assert!(!jwks["keys"][0]["n"].as_str().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cors_allows_the_configured_web_origin() {
+    let origin = "https://near-payrole.vercel.app";
+    let app = TestApp::with_allowed_origins(vec![origin.to_owned()]);
+
+    let request = Request::builder()
+        .method("OPTIONS")
+        .uri("/token")
+        .header(header::ORIGIN, origin)
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.send(request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        origin
+    );
+
+    let request = Request::builder()
+        .method("OPTIONS")
+        .uri("/token")
+        .header(header::ORIGIN, "https://evil.example.com")
+        .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.send(request).await;
+    assert!(response
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .is_none());
 }
 
 #[tokio::test]

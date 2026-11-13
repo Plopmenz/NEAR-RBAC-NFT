@@ -34,37 +34,136 @@ token.
 > [Security model](#security-model) and [Limitations](#limitations) before using it with real
 > funds.
 
+> **Hosted demo:** <https://near-payrole.vercel.app> on NEAR testnet. The
+> [judge walkthrough](#judge-walkthrough-do-x-see-y) starts there and uses only the browser.
+
 ## Judge walkthrough: do X, see Y
 
-This section is written for a screening bot or a human judge who wants to verify the project
-without reading the whole codebase first. Every step is self-contained and states exactly what
-to run and what success looks like. Nothing is deployed by this repository, so on-chain steps
-use example testnet account ids; replace them with accounts you control.
+This walkthrough starts at the hosted app — **<https://near-payrole.vercel.app>** — and uses
+NEAR testnet. It is written for a screening bot or a human judge who wants to verify the product
+without reading the whole codebase first. Every step says exactly what to do and what success
+looks like. Source-level verification is at the end.
 
-### 1. Verify the Rust workspace and the contracts
+You need a NEAR testnet wallet with a small NEAR balance for deployments, storage deposits, and
+gas. The demo salary token is free and permissionless to mint, so payroll itself costs no real
+value. The hosted build is a static frontend: it talks to NEAR JSON-RPC directly and signs with
+your wallet, with no backend or indexer.
+
+> If the page shows **“Factory not configured”**, that particular build was produced without
+> `PUBLIC_FACTORY_CONTRACT_ID`. Use the local build in step 9 instead; every contract action below
+> is identical. The canonical hosted build points at `payrole-factory.testnet`.
+
+### 1. Open the app and connect a wallet
+
+**Do:** Open <https://near-payrole.vercel.app>, read the hero, and click **Connect wallet**.
+
+**See:** the tagline **“On-chain roles and payroll for NEAR DAOs”**, four tabs — **Deploy**,
+**Owned contracts**, **My roles**, **OIDC access** — and a `testnet` network badge. After you
+approve the wallet, the header shows your account instead of “Not connected”, and the Deploy
+panel shows the factory account, its pinned child wasm hash, and the minimum deployment deposit.
+
+### 2. Deploy a payroll contract in one transaction
+
+**Do:** In **Deploy**, enter a subaccount name (for example `acme`), leave the owner as your
+account unless you have a DAO/Trezu account, keep the pre-filled demo salary token, choose a
+payout interval, and press **Deploy contract**. Approve the transaction.
+
+**See:** the status line links to the transaction, and the preview shows the child account
+`acme.payrole-factory.testnet` before you send. After confirmation the contract appears in
+**Owned contracts** with its live `owner_id()`, salary token, payout interval, balance, and a
+**funded** or **underfunded** badge. The registry record is emitted as a NEP-297
+`payrole-factory` / `deploy` event.
+
+For demoing salary quickly, pick a short interval (1 hour, or 1 day); the form defaults to 30
+days for realistic payroll.
+
+### 3. Fund the contract with free demo salary tokens
+
+**Do:** On the new contract card in **Owned contracts**, press **Fund 100** (the exact amount
+comes from `PUBLIC_DEMO_FUND_AMOUNT`).
+
+**See:** the card's salary-token balance rises from `0` to `100 MOCK` and the badge changes to
+**funded**. The button only appears when the contract's salary token equals the configured
+`PUBLIC_SALARY_TOKEN_ID`. This is a bundled mock NEP-141 with permissionless `mint`, so no one
+can lose real funds through it.
+
+### 4. Create a role and mint a membership
+
+**Do:** Open **Owned contracts → Contract administration → Create / update role**. Enter
+`admin` and a salary per interval (for example `10`), then **Save role**. In the role's
+**Membership actions** row, enter your account (or a second testnet account) and press **Mint**.
+
+**See:** the role table gains a row for `admin` showing `id 10117748766825055253`, salary per
+interval, holder count `1`, and the effective role owner. Minting asks for the contract-reported
+storage deposit (about `0.011 NEAR`) and emits a NEP-245 `mt_mint` event. In **My roles**, the
+member card shows salary, last claim, a payout progress bar, and the claimable amount.
+
+### 5. Let salary accrue and claim it
+
+**Do:** Wait at least one payout interval, open **My roles**, scan the member address, and press
+**Claim** when the claimable amount is non-zero.
+
+**See:** the claimable amount is `full intervals × salary`; partial intervals are not paid yet.
+The status line links to the transaction. The member's token balance increases and the contract
+card's balance versus `accrued_liabilities()` updates. Anyone can trigger a claim, but the
+transfer always goes to the member.
+
+### 6. Burn the membership and watch access disappear
+
+**Do:** Back in **Owned contracts**, enter the member in the role's **Burn** field and confirm.
+Leave the default “pay pending salary” behaviour on. Then open **My roles** again.
+
+**See:** the member's pending salary is transferred first, the holder count returns to `0`, and
+the membership disappears from **My roles**. If the salary transfer fails, the burn rolls back so
+it can be retried. Passing `pay_pending: false` (available through the contract API) removes
+access without paying. The **OIDC access** tab then shows a cross (✗) for labels that role used
+to grant.
+
+### 7. Map roles to OIDC access labels
+
+**Do:** In **Owned contracts → Contract administration → OIDC access labels**, choose `admin`
+and enter comma-separated labels such as `admin-panel, billing:read`, then **Save access labels**.
+Mint the role again for your account.
+
+**See:** the role table shows the labels as tags. The mapping is stored in this browser under
+`payrole-nft:access:v1:<network>`; it is a presentation layer over on-chain roles, not another
+contract setting. Labels are aggregated across roles: holding any role that grants a label is
+enough to receive it.
+
+### 8. Sign in with OIDC and see ✓ / ✗ access
+
+**Do:** Open the **OIDC access** tab and press **Sign in with OIDC**. The hosted provider shows a
+NEP-413 message; approve it with the same wallet account. You are redirected back to
+`/oidc/callback` and then to the access tab.
+
+**See:** the session card shows the OIDC account, issuer, scopes, expiry, and live roles from
+`/userinfo`. Below it, each configured label is rendered with **✓ granted** or **✗ denied**,
+together with the roles that grant it, checked against role NFTs read directly from every
+registry contract. If no labels are configured, the page uses role names as sample labels so the
+check/cross behaviour is still visible. Press **Refresh roles** after minting or burning to see
+access change without signing in again. **Sign out** clears the local session.
+
+The web app is a public OpenID Connect client using the authorization-code flow with PKCE
+(S256); it stores no client secret. The provider must register the exact callback
+`https://near-payrole.vercel.app/oidc/callback` and allow the web origin in `allowed_origins` for
+CORS. See [OIDC provider](#oidc-provider) for the server side.
+
+### 9. Verify the source locally
 
 **Do:**
 
 ```bash
 cargo test --workspace
-```
-
-**See:** `test result: ok` for every crate, ending with **170 Rust tests passed**. The suite
-covers role hashing, initialization/admin permissions, role creation and delegation,
-mint/burn, pagination, holder indexes, NEP-245 reads/metadata, salary accrual, partial
-intervals, independent holder claims, burn payouts and rollbacks, arbitrary-token withdrawal,
-liabilities, and factory owner sync.
-
-**Do:**
-
-```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-**See:** both commands exit `0` with no formatting diffs and no clippy warnings.
-
-### 2. Verify the web app
+**See:** `test result: ok` for every crate, ending with **172 Rust tests passed**, then no
+formatting diffs and no clippy warnings. The suite covers role hashing, initialization/admin
+permissions, role creation and delegation, mint/burn, pagination, holder indexes, NEP-245
+reads/metadata, salary accrual, partial intervals, independent holder claims, burn payouts and
+rollbacks, arbitrary-token withdrawal, liabilities, factory owner sync, OIDC discovery/JWKS,
+PKCE, code binding, CORS, session revocation, and introspection.
 
 **Do:**
 
@@ -76,12 +175,11 @@ npm run check
 npm run build
 ```
 
-**See:** **36 Vitest tests passed**, `astro check` reports `0 errors`, and a static site is
-written to `services/web/dist/`. The tests cover role-id vectors, account/subaccount
-validation, amount/duration parsing, payout-interval defaults, interval progress, favorites
-scoping, bounded concurrency, and role/contract permission helpers.
-
-### 3. Build the deployable wasm
+**See:** **47 Vitest tests passed**, `astro check` reports `0 errors`, and a static site is
+written to `services/web/dist/`. The tests cover role-id vectors, account/subaccount validation,
+amount/duration parsing, payout-interval defaults, interval progress, favorites scoping, bounded
+concurrency, role/contract permission helpers, local access-label mapping, PKCE S256 vectors, and
+the authorization-code callback.
 
 **Do:**
 
@@ -92,198 +190,13 @@ ls -lh res/payrole_nft.wasm res/payrole_factory.wasm res/mock_ft.wasm
 sha256sum res/payrole_nft.wasm
 ```
 
-**See:** all three artifacts exist. `payrole_nft.wasm` is ~**399 KiB** and
-`payrole_factory.wasm` is ~**230 KiB** in this release profile (`opt-level = "z"`, LTO, one
-codegen unit, abort-on-panic, overflow checks, symbols stripped). The `sha256sum` value is the
-hash the factory stores and clients can pin as `PUBLIC_EXPECTED_CHILD_CODE_HASH`.
+**See:** all three artifacts exist. `payrole_nft.wasm` is about **399 KiB**,
+`payrole_factory.wasm` about **230 KiB**, and `mock_ft.wasm` about **137 KiB** in this release
+profile (`opt-level = "z"`, LTO, one codegen unit, abort-on-panic, overflow checks, symbols
+stripped). The `sha256sum` value is the hash the factory stores and clients can pin as
+`PUBLIC_EXPECTED_CHILD_CODE_HASH`.
 
-### 4. Deploy the immutable factory (optional, needs testnet NEAR)
-
-**Do:**
-
-```bash
-MASTER_ACCOUNT=<your-funded-testnet-account> \
-FACTORY_ACCOUNT=payrole-factory.testnet \
-./scripts/deploy-factory.sh
-```
-
-**See:** the script prints `Deployed payrole-factory.testnet ...`, then:
-
-```bash
-near view payrole-factory.testnet required_deploy_deposit
-near view payrole-factory.testnet code_hash
-```
-
-returns a deposit of roughly **4.1 NEAR** and the same SHA-256 hash printed in step 3. There
-is no owner, no `set_code`, and no withdrawal method: the child wasm is fixed by the `new(code)`
-init call.
-
-### 5. Deploy a child contract through the factory
-
-The walkthrough uses the bundled mock NEP-141 for salary so that the claim step works without a
-real token or a storage-registration dance. Set your funded testnet account once:
-
-```bash
-export MASTER_ACCOUNT=<your-funded-testnet-account>
-```
-
-**Do (create and fund the demo salary token):**
-
-```bash
-near create-account mock-ft.$MASTER_ACCOUNT \
-  --masterAccount "$MASTER_ACCOUNT" --initialBalance 3
-near deploy mock-ft.$MASTER_ACCOUNT res/mock_ft.wasm \
-  --initFunction new --initArgs '{"seed":1}'
-near call mock-ft.$MASTER_ACCOUNT mint \
-  '{"account_id":"acme.payrole-factory.testnet","amount":"100000000"}' \
-  --accountId "$MASTER_ACCOUNT"
-```
-
-**Do (deploy the child):**
-
-```bash
-near call payrole-factory.testnet deploy \
-  "{\"name\":\"acme\",\"owner_id\":\"dao.testnet\",\"salary_token\":\"mock-ft.$MASTER_ACCOUNT\",\"payout_interval_ns\":\"1000000000\"}" \
-  --accountId dao.testnet \
-  --deposit 5 \
-  --gas 300000000000000
-```
-
-**See:** an `EVENT_JSON` line with standard `payrole-factory`, event `deploy`, and a record for
-`acme.payrole-factory.testnet`. Read it back:
-
-```bash
-near view payrole-factory.testnet get_contract '{"account_id":"acme.payrole-factory.testnet"}'
-near view acme.payrole-factory.testnet owner_id
-near view acme.payrole-factory.testnet factory_id
-near view acme.payrole-factory.testnet payout_interval_ns
-near view acme.payrole-factory.testnet salary_token
-```
-
-The contract exists, `owner_id` is `dao.testnet`, `factory_id` is `payrole-factory.testnet`,
-`payout_interval_ns` is `1000000000` (1 second, so salary is visible immediately), and
-`salary_token` is `mock-ft.<your-account>.testnet`. The web app defaults to 30 days for real
-deployments; the short interval is only for this verification.
-
-### 6. Create a role, mint it, and check access
-
-**Do:**
-
-```bash
-near call acme.payrole-factory.testnet set_role_salary \
-  '{"role":"admin","salary":"1000000"}' \
-  --accountId dao.testnet
-
-near call acme.payrole-factory.testnet mint_role \
-  '{"account_id":"alice.testnet","role":"admin"}' \
-  --accountId dao.testnet \
-  --deposit 0.011
-```
-
-**See:** `set_role_salary` returns a `RoleView` for `admin`, and `mint_role` returns the
-decimal token id `10117748766825055253` (the first 8 bytes of `SHA-256("admin")`). Then:
-
-```bash
-near view acme.payrole-factory.testnet has_role \
-  '{"account_id":"alice.testnet","role":"admin"}'
-near view acme.payrole-factory.testnet roles_of '{"account_id":"alice.testnet"}'
-near view acme.payrole-factory.testnet members_of \
-  '{"role":"admin"}'
-near view acme.payrole-factory.testnet mt_balance_of \
-  '{"account_id":"alice.testnet","token_id":"10117748766825055253"}'
-```
-
-returns `true`, `["admin"]`, a member list containing `alice.testnet`, and `"1"`. The same
-role id also appears in `get_role` and in the `nep245` `mt_mint` event.
-
-### 7. Verify non-transferability
-
-**Do:**
-
-```bash
-near call acme.payrole-factory.testnet mt_transfer \
-  '{"receiver_id":"bob.testnet","token_id":"10117748766825055253","amount":"1"}' \
-  --accountId alice.testnet
-```
-
-**See:** the transaction fails with **`role NFTs are non-transferable`**. Access cannot be
-sold or moved; only mint/burn by the contract owner or role owner changes membership.
-
-### 8. Claim salary and inspect liabilities
-
-**Do:**
-
-```bash
-# Immediately after minting the first interval has not elapsed:
-near view acme.payrole-factory.testnet claimable '{"account_id":"alice.testnet"}'
-sleep 2
-near view acme.payrole-factory.testnet claimable '{"account_id":"alice.testnet"}'
-near view acme.payrole-factory.testnet accrued_liabilities
-near call acme.payrole-factory.testnet claim \
-  '{"account_id":"alice.testnet"}' \
-  --accountId alice.testnet \
-  --gas 100000000000000
-near view mock-ft.$MASTER_ACCOUNT ft_balance_of '{"account_id":"alice.testnet"}'
-```
-
-**See:** the first `claimable` is `"0"`; after `sleep 2` it is at least `"2000000"` (two 1-second
-intervals at a salary of `1000000`), and `accrued_liabilities` matches. `claim` returns the paid
-amount, and `ft_balance_of` for `alice.testnet` increases by that amount. The transfer goes to
-`alice.testnet` even when a third party calls `claim`. A role's salary and the global interval
-apply retroactively to unclaimed time, so claim before changing payroll config.
-
-### 9. Burn a membership with or without paying pending salary
-
-**Do (default: pay, then remove access):**
-
-```bash
-sleep 2
-near call acme.payrole-factory.testnet burn_role \
-  '{"account_id":"alice.testnet","role":"admin"}' \
-  --accountId dao.testnet \
-  --gas 100000000000000
-near view acme.payrole-factory.testnet has_role \
-  '{"account_id":"alice.testnet","role":"admin"}'
-```
-
-**See:** the pending salary from the last two seconds is transferred first, then `has_role`
-returns `false`. If the salary transfer fails, the membership and claim timestamp are restored
-so the burn can be retried. To remove a membership without paying, mint one for `bob.testnet`,
-let it accrue, and pass `pay_pending: false`:
-
-```bash
-near call acme.payrole-factory.testnet mint_role \
-  '{"account_id":"bob.testnet","role":"admin"}' \
-  --accountId dao.testnet --deposit 0.011
-sleep 2
-near call acme.payrole-factory.testnet burn_role \
-  '{"account_id":"bob.testnet","role":"admin","pay_pending":false}' \
-  --accountId dao.testnet
-near view mock-ft.$MASTER_ACCOUNT ft_balance_of '{"account_id":"bob.testnet"}'
-```
-
-**See:** `bob.testnet` receives nothing even though salary had accrued, and access is removed
-immediately.
-
-### 10. Run the web app
-
-**Do:**
-
-```bash
-cd services/web
-cp .env.example .env
-# set PUBLIC_FACTORY_CONTRACT_ID=payrole-factory.testnet
-npm run dev
-```
-
-**See:** open **http://localhost:4321**. The PayRole page loads with the subtitle
-“On-chain roles and payroll for NEAR DAOs.” and three tabs: **Deploy**, **Owned contracts**,
-and **My roles**. Connect a wallet, deploy a child at `{name}.{payrole-factory.testnet}`, scan
-an owner, then watch each contract card show salary-token balance vs. `accrued_liabilities()`
-with a **funded** or **underfunded** badge. Mint/burn controls attach the required deposit and
-pay pending salary by default.
-
-### 11. Check the OIDC provider
+### 10. Run the OIDC provider locally (optional)
 
 **Do:**
 
@@ -304,21 +217,24 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/healthz
 The discovery document contains `"issuer":"https://auth.example.com"` plus `token_endpoint` and
 `jwks_uri`; the JWKS contains a key with `"kty":"RSA"`, `"alg":"RS256"`, and `"use":"sig"`; the
 health check prints `200`. If port 8080 is already in use, change `listen` in the config (and
-the curl URLs) to another port. A browser login uses NEP-413, verifies the signing key is a
-current access key of the claimed account, checks the client's `required_roles` via live
-`roles_of`, and redirects with a one-time authorization code.
+the curl URLs) to another port. For the hosted web client, register
+`https://near-payrole.vercel.app/oidc/callback` and add
+`allowed_origins = ["https://near-payrole.vercel.app"]`.
 
 ### What each judge-facing feature maps to
 
 | Claim | Where to verify |
 | --- | --- |
-| Roles are non-transferable NEP-245 NFTs | Step 7; `contracts/payrole-nft/src/lib.rs` transfer methods. |
-| Salary is NEP-141 and paid per full interval | Step 8; `claim`, `claimable`, `accrued_liabilities`. |
-| Burning pays pending salary by default | Step 9; `burn_role(..., pay_pending)`. |
-| One-transaction factory deployment | Steps 4–5; `contracts/payrole-factory`. |
-| Owner/role-owner administration | Step 6; `set_role_owner`, mint/burn auth. |
-| Off-chain SSO from on-chain roles | Step 11; `services/oidc`. |
-| Browser UI without an indexer | Step 10; `services/web`. |
+| Hosted app works without an indexer | Steps 1–8; `services/web`. |
+| One-transaction factory deployment | Step 2; `contracts/payrole-factory`. |
+| Free demo salary funding | Step 3; `scripts/deploy-salary-token.sh` and `test-contracts/mock-ft`. |
+| Roles are non-transferable NEP-245 NFTs | Step 4 and step 9; `contracts/payrole-nft/src/lib.rs` transfer methods. |
+| Salary is NEP-141 and paid per full interval | Steps 4–5; `claim`, `claimable`, `accrued_liabilities`. |
+| Burning pays pending salary by default | Step 6; `burn_role(..., pay_pending)`. |
+| Owner/role-owner administration | Step 4; **Contract administration**, `set_role_owner`, mint/burn auth. |
+| Configurable role → OIDC access mapping | Step 7; `services/web/src/lib/access.ts`. |
+| Off-chain SSO from on-chain roles | Step 8; `services/oidc`. |
+| Production global-by-hash trade-off documented | [Production: global contract by hash](#production-global-contract-by-hash). |
 
 ## Contents
 
@@ -378,6 +294,7 @@ current access key of the claimed account, checks the client's `required_roles` 
 │   └── tests/                     # Vitest unit tests
 ├── scripts/build-contract.sh      # Build/optimize contracts + test token into res/
 ├── scripts/deploy-factory.sh      # Deploy the immutable factory with pinned child wasm
+├── scripts/deploy-salary-token.sh # Deploy the permissionless demo NEP-141 for the hosted demo
 └── .github/workflows/ci.yml
 ```
 
@@ -478,6 +395,16 @@ access key and is therefore immutable. Clients should pin `code_hash()` (or set
 caveats, and [Production: global contract by hash](#production-global-contract-by-hash) for the
 lower-cost production path.
 
+For the hosted demo, deploy the bundled permissionless-mint salary token once:
+
+```bash
+MASTER_ACCOUNT=dao.testnet ./scripts/deploy-salary-token.sh
+```
+
+The script deploys `mock-ft.<master>` from `res/mock_ft.wasm`, initializes it, and prints the
+`PUBLIC_SALARY_TOKEN_*` values to build the web app with. The token lets the app offer a free
+**Fund** button and is intended only for testnet demos; anyone can mint it.
+
 ### Run the web app
 
 ```bash
@@ -488,9 +415,11 @@ npm install
 npm run dev
 ```
 
-The app deploys contracts, discovers contracts owned by an address (with local favorites),
-shows roles held by an address with payout progress and claim buttons, and exposes owner/role
-owner administration controls. See [`services/web/README.md`](services/web/README.md).
+The app deploys contracts, funds demo payroll, discovers contracts owned by an address (with
+local favorites), shows roles held by an address with payout progress and claim buttons, exposes
+owner/role owner administration controls, maps roles to OIDC access labels, and signs in with the
+external OIDC provider. See [`services/web/README.md`](services/web/README.md) for the full
+environment variable list and hosted-provider setup.
 
 ### Configure a role and grant it
 
@@ -795,24 +724,30 @@ with another name.
 ### Web app
 
 [`services/web`](services/web) is a static Astro app with vanilla TypeScript and
-wallet-selector. It has three views:
+wallet-selector. It has four views:
 
 | View | Behavior |
 | --- | --- |
-| **Deploy** | Shows factory status and the required deposit, validates the subaccount/owner/token/interval (30 days by default), and calls `deploy` through the connected wallet. |
-| **Owned contracts** | Scans the full registry, verifies each child's live `owner_id()`, filters by the scanned address, and supports local favorites to suppress spam. |
+| **Deploy** | Shows factory status and the required deposit, pre-fills the demo salary token, validates the subaccount/owner/token/interval (30 days by default), and calls `deploy` through the connected wallet. |
+| **Owned contracts** | Scans the full registry, verifies each child's live `owner_id()`, filters by the scanned address, and supports local favorites to suppress spam. Contracts using the configured demo token get a free **Fund N** button. |
 | **My roles** | Scans the registry with `roles_of`, then reads role salary, `last_claim`, `claimable_role`, and renders a payout interval progress bar and claim button per membership. |
+| **OIDC access** | Signs in to the configured OpenID Connect provider with PKCE, shows the account and live `/userinfo` roles, and checks browser-local role → access-label mappings against on-chain role NFTs with ✓ / ✗. |
 
-Contract owners get role creation/salary, role-owner delegation, payroll configuration, and
-ownership transfer controls. Every contract card also shows the treasury's current salary-token
-balance against `accrued_liabilities()`, marked funded or underfunded. Contract or role owners get
-mint/burn controls; minting attaches `required_mint_deposit()` and burning pays accrued salary
-first. Every write action shows a pending/disabled button and reports success or a wallet error
-in the status line. All reads go
+Contract owners get role creation/salary, role-owner delegation, payroll configuration,
+ownership transfer controls, and an **OIDC access labels** form. Every contract card also shows
+the treasury's current salary-token balance against `accrued_liabilities()`, marked funded or
+underfunded. Contract or role owners get mint/burn controls; minting attaches
+`required_mint_deposit()` and burning pays accrued salary first. Every write action shows a
+pending/disabled button and reports success or a wallet error in the status line. All reads go
 directly to NEAR JSON-RPC; no indexer is required. The registry is a discovery hint only: every
 displayed contract is re-checked on-chain, and favorites are scoped by network and account in
-`localStorage`. Set `PUBLIC_SITE_URL` at build time to enable canonical and Open Graph/Twitter
-preview tags for the bundled `public/og.png` social card.
+`localStorage`.
+
+Build-time configuration covers the demo salary token (`PUBLIC_SALARY_TOKEN_ID`,
+`PUBLIC_SALARY_TOKEN_DECIMALS`, `PUBLIC_SALARY_TOKEN_SYMBOL`, `PUBLIC_DEMO_FUND_AMOUNT`) and the
+OIDC client (`PUBLIC_OIDC_ISSUER`, `PUBLIC_OIDC_CLIENT_ID`, `PUBLIC_OIDC_SCOPES`,
+`PUBLIC_OIDC_REDIRECT_URI`). Set `PUBLIC_SITE_URL` to enable canonical and Open Graph/Twitter
+preview tags and to default the OIDC callback to `${PUBLIC_SITE_URL}/oidc/callback`.
 
 ## Production: global contract by hash
 
@@ -952,9 +887,29 @@ main fields are:
 | `store_sweep_interval_secs` | `60` | Background interval for pruning expired logins, codes, and sessions. |
 | `verify_access_key` | `true` | Require the NEP-413 key to be an access key of the account. |
 | `allowed_scopes` | `openid profile roles` | Global scope allow-list. |
+| `allowed_origins` | empty | Exact browser origins allowed to call discovery, `/token`, and `/userinfo` with CORS. |
 
 Each client supports `client_id`, `name`, `redirect_uris`, optional `client_secret`
 (confidential client), `required_roles`, and optional per-client `allowed_scopes`.
+
+The hosted web app is a **public PKCE client**, so its `[[clients]]` entry has no
+`client_secret`. Register the exact redirect
+`https://near-payrole.vercel.app/oidc/callback`, keep `required_roles = []` so any wallet can
+inspect its own access, and add the web origin to the top-level CORS list:
+
+```toml
+allowed_origins = ["https://near-payrole.vercel.app"]
+
+[[clients]]
+client_id = "payrole-web"
+name = "PayRole web"
+redirect_uris = ["https://near-payrole.vercel.app/oidc/callback"]
+required_roles = []
+```
+
+`allowed_origins` entries must be exact `http(s)` origins with no path, query, or trailing
+slash. OAuth redirects do not need CORS, but discovery, the token exchange, and `/userinfo` do
+because they are `fetch` calls from the static app.
 
 Generate a signing key and run:
 
@@ -1097,6 +1052,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 - Reads have a 20-second timeout. A failed child read is treated as not-owned/no-roles for that
   contract instead of failing the whole scan.
 - Token metadata is best-effort; missing metadata falls back to raw units.
+- The role → OIDC access-label mapping is stored per browser and network in `localStorage`,
+  not on-chain. It changes presentation only; access is always re-derived from live role NFTs.
 - Hash pinning is opt-in (`PUBLIC_EXPECTED_CHILD_CODE_HASH`); without it the app displays the
   factory's hash but does not verify it against a value you reviewed.
 
@@ -1105,8 +1062,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 - The pending-login/code/session store is process-local and in-memory. Restarting loses
   sessions; multiple replicas do not share state. Expired entries are pruned by a periodic
   sweeper and pending logins are capped, but the store remains memory-bound per process.
-- No refresh tokens, dynamic client registration, consent screen, device flow, token
-  exchange, DPoP, or CORS.
+- No refresh tokens, dynamic client registration, consent screen, device flow, or token
+  exchange. CORS is supported only for the exact origins configured in `allowed_origins`.
 - One RSA signing key, loaded at startup. There is no key rotation endpoint or multi-key
   JWKS.
 - Access tokens are self-contained JWTs. A client that only validates the JWT locally will
@@ -1130,8 +1087,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 cargo test --workspace
 ```
 
-The Rust workspace currently has **170 tests**, the web app has **36 Vitest tests**, and there
-are **5 Docker-gated sandbox tests** (**211 total** when the sandbox job runs):
+The Rust workspace currently has **172 tests**, the web app has **47 Vitest tests**, and there
+are **5 Docker-gated sandbox tests** (**213 total** when the sandbox job runs):
 
 - `crates/payrole-common`: 6 tests covering role hashing, token-id encoding, documented vectors,
   and role-name validation.
@@ -1142,17 +1099,17 @@ are **5 Docker-gated sandbox tests** (**211 total** when the sandbox job runs):
 - `contracts/payrole-factory`: 20 tests covering immutable initialization and code hashing, name
   and gas/deposit validation, child creation receipts, callback registration/failure/refund,
   duplicate protection, owner-index updates, and registry pagination/indexes.
-- `services/oidc`: 37 unit tests covering config validation (including the example config),
-  RSA/JWKS, NEP-413 serialization and signatures, role-result decoding, store pruning/caps, and
-  handler helpers.
-- `services/oidc/tests/oidc_flow.rs`: 15 end-to-end HTTP tests covering discovery, JWKS,
+- `services/oidc`: 38 unit tests covering config validation (including the example config and
+  CORS origins), RSA/JWKS, NEP-413 serialization and signatures, role-result decoding, store
+  pruning/caps, and handler helpers.
+- `services/oidc/tests/oidc_flow.rs`: 16 end-to-end HTTP tests covering discovery, JWKS,
   full PKCE authorization-code flow, code binding/reuse/expiry, confidential clients,
   login signature/access-key checks, required roles, live role revocation, logout,
-  introspection, introspection client binding, and the pending-login 429 response.
-- `services/web/tests`: 36 Vitest tests covering role-id vectors and token ids, account and
+  introspection, introspection client binding, the pending-login 429 response, and CORS.
+- `services/web/tests`: 47 Vitest tests covering role-id vectors and token ids, account and
   subaccount validation, amount/duration formatting and parsing, payout-interval defaults,
-  interval progress, favorites scoping/persistence, bounded-concurrency mapping, and
-  role/contract permission helpers.
+  interval progress, favorites scoping/persistence, bounded-concurrency mapping, role/contract
+  permission helpers, local access-label mapping, PKCE S256 vectors, and the OIDC callback.
 - `contracts/*/tests/sandbox.rs`: 5 tests against a real NEAR sandbox (Docker) covering FT claim
   and burn payouts, failed-payout rollback, arbitrary-token withdrawal/liabilities, factory
   deploy + registry + owner sync, and failed child initialization with a reserve refund.

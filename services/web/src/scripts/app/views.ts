@@ -1,4 +1,6 @@
 import { factoryExplorerUrl } from "../../lib/factory";
+import { accessItems, labelsForRole } from "../../lib/access";
+import { oidcConfigured } from "../../lib/oidc";
 import {
   formatDurationNs,
   formatNear,
@@ -44,6 +46,17 @@ function roleOwnerLabel(snapshot: ContractSnapshot, role: RoleView): string {
     )}</span>`;
   }
   return `<span class="muted" title="${escapeHtml(snapshot.ownerId)}">contract owner</span>`;
+}
+
+function demoFundingButton(snapshot: ContractSnapshot): string {
+  if (!state.config.salaryTokenId || snapshot.salaryToken !== state.config.salaryTokenId) {
+    return "";
+  }
+  return `<button class="btn small" type="button" data-action="fund" data-contract="${escapeHtml(
+    snapshot.accountId,
+  )}">Fund ${escapeHtml(
+    state.config.demoFundAmount,
+  )} ${escapeHtml(snapshot.token.symbol)}</button>`;
 }
 
 function fundingStatus(snapshot: ContractSnapshot): string {
@@ -116,7 +129,7 @@ function roleTable(snapshot: ContractSnapshot, roles: RoleView[]): string {
     return '<p class="muted">No roles configured yet. The contract owner can create one below.</p>';
   }
   return `<div class="table-wrap"><table>
-    <thead><tr><th>Role</th><th>Salary</th><th>Holders</th><th>Owner</th><th>Membership actions</th></tr></thead>
+    <thead><tr><th>Role</th><th>Salary</th><th>Holders</th><th>Owner</th><th>OIDC access</th><th>Membership actions</th></tr></thead>
     <tbody>
       ${roles
         .map(
@@ -129,12 +142,21 @@ function roleTable(snapshot: ContractSnapshot, roles: RoleView[]): string {
             )}</span></td>
             <td>${role.holders}</td>
             <td>${roleOwnerLabel(snapshot, role)}</td>
+            <td>${roleAccessLabels(snapshot, role)}</td>
             <td>${roleActions(snapshot, role)}</td>
           </tr>`,
         )
         .join("")}
     </tbody>
   </table></div>`;
+}
+
+function roleAccessLabels(snapshot: ContractSnapshot, role: RoleView): string {
+  const labels = labelsForRole(state.accessMap, snapshot.accountId, role.name);
+  if (labels.length === 0) return '<span class="muted">—</span>';
+  return labels
+    .map((label) => `<span class="tag">${escapeHtml(label)}</span>`)
+    .join(" ");
 }
 
 function ownerAdminForms(snapshot: ContractSnapshot): string {
@@ -159,6 +181,27 @@ function ownerAdminForms(snapshot: ContractSnapshot): string {
       <label class="field"><span>Role name</span><input name="role" placeholder="admin" required /></label>
       <label class="field"><span>Role owner (blank = contract owner)</span><input name="owner" placeholder="hr.testnet" /></label>
       <button class="btn small" type="submit">Set role owner</button>
+    </form>
+
+    <form class="admin-form" data-form="role-access" data-contract="${escapeHtml(
+      snapshot.accountId,
+    )}">
+      <h4>OIDC access labels</h4>
+      <label class="field"><span>Role</span>
+        <select name="role" data-access-role required>
+          ${snapshot.roles
+            .map(
+              (role) =>
+                `<option value="${escapeHtml(role.name)}" data-labels="${escapeHtml(
+                  labelsForRole(state.accessMap, snapshot.accountId, role.name).join(", "),
+                )}">${escapeHtml(role.name)}</option>`,
+            )
+            .join("")}
+        </select>
+      </label>
+      <label class="field"><span>Labels (comma separated)</span><input name="labels" placeholder="admin-panel, billing:read" /></label>
+      <button class="btn small" type="submit">Save access labels</button>
+      <small class="muted">Stored in this browser. The OIDC access tab checks these labels against live on-chain roles.</small>
     </form>
 
     <form class="admin-form" data-form="payout" data-contract="${escapeHtml(
@@ -200,6 +243,7 @@ function ownedCard(item: OwnedContract): string {
         <button class="btn icon${favorite ? " active" : ""}" type="button" data-action="favorite" data-contract="${escapeHtml(
           item.record.account_id,
         )}" aria-label="${favorite ? "Remove from favorites" : "Add to favorites"}">${favorite ? "★" : "☆"}</button>
+        ${demoFundingButton(snapshot)}
         <a class="btn small ghost" href="${escapeHtml(
           factoryExplorerUrl(state.config.explorerUrl, snapshot.accountId),
         )}" target="_blank" rel="noreferrer">Explorer</a>
@@ -284,6 +328,7 @@ function membershipCard(item: MembershipContract): string {
         <div class="contract-address">${escapeHtml(snapshot.accountId)}</div>
       </div>
       <div class="card-actions">
+        ${demoFundingButton(snapshot)}
         ${
           item.memberships.length > 1
             ? `<button class="btn small" type="button" data-action="claim-all" data-contract="${escapeHtml(
@@ -337,6 +382,11 @@ export function renderFactory(): void {
   const note = byId<HTMLElement>("factory-code-note");
   const hint = byId<HTMLElement>("deploy-deposit-hint");
   const config = state.config;
+
+  const tokenInput = byId<HTMLInputElement>("deploy-token");
+  if (config.salaryTokenId && !tokenInput.value) {
+    tokenInput.value = config.salaryTokenId;
+  }
 
   factoryId.textContent = config.factoryContractId || "not configured";
 
@@ -503,18 +553,171 @@ export function renderRoles(): void {
   list.innerHTML = state.memberships.map(membershipCard).join("");
 }
 
+function accessContractCard(item: MembershipContract): string {
+  const snapshot = item.snapshot;
+  const heldRoles = item.memberships.map((membership) => membership.role.name);
+  const allRoles = snapshot.roles.map((role) => role.name);
+  const items = accessItems(
+    state.accessMap,
+    snapshot.accountId,
+    allRoles,
+    heldRoles,
+  );
+  const configured = allRoles.some(
+    (role) => labelsForRole(state.accessMap, snapshot.accountId, role).length > 0,
+  );
+  const heldTags =
+    heldRoles.length > 0
+      ? heldRoles
+          .map((role) => `<span class="tag ok">${escapeHtml(role)}</span>`)
+          .join(" ")
+      : '<span class="muted">no roles</span>';
+
+  const rows = items
+    .map(
+      (access) => `<tr>
+        <td><code>${escapeHtml(access.label)}</code>${
+          access.roles.length > 0
+            ? `<span class="muted">via ${escapeHtml(access.roles.join(", "))}</span>`
+            : '<span class="muted">role-name fallback</span>'
+        }</td>
+        <td>${
+          access.granted
+            ? '<span class="tag ok">✓ granted</span>'
+            : '<span class="tag error">✗ denied</span>'
+        }</td>
+      </tr>`,
+    )
+    .join("");
+
+  return `<article class="card">
+    <div class="card-head">
+      <div>
+        <h3>${escapeHtml(item.record?.name ?? snapshot.accountId)}</h3>
+        <div class="contract-address">${escapeHtml(snapshot.accountId)}</div>
+      </div>
+      <div class="card-actions">
+        <a class="btn small ghost" href="${escapeHtml(
+          factoryExplorerUrl(state.config.explorerUrl, snapshot.accountId),
+        )}" target="_blank" rel="noreferrer">Explorer</a>
+      </div>
+    </div>
+    <p class="small muted">Roles held on-chain: ${heldTags}</p>
+    ${
+      items.length === 0
+        ? '<p class="muted">This contract has no roles yet.</p>'
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Access label</th><th>Status</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>`
+    }
+    <p class="small muted">${
+      configured
+        ? "Configured by the contract owner in Owned contracts → Contract administration."
+        : "No labels configured; showing role names as sample access labels."
+    }</p>
+  </article>`;
+}
+
+export function renderAccess(): void {
+  const sessionBox = byId<HTMLElement>("oidc-session");
+  const summary = byId<HTMLElement>("access-summary");
+  const list = byId<HTMLElement>("access-list");
+  const login = byId<HTMLButtonElement>("oidc-login");
+  const logout = byId<HTMLButtonElement>("oidc-logout");
+  const refresh = byId<HTMLButtonElement>("access-refresh");
+  const configured = oidcConfigured(state.config);
+  const session = state.oidcSession;
+  const accountId = session?.accountId ?? state.walletAccount ?? "";
+
+  login.hidden = !configured || Boolean(session);
+  logout.hidden = !session;
+  refresh.disabled = !accountId || state.accessLoading;
+
+  if (!configured) {
+    sessionBox.innerHTML = `<div class="warning">OIDC is not configured for this deployment. Set <code>PUBLIC_OIDC_ISSUER</code> and <code>PUBLIC_OIDC_CLIENT_ID</code> and rebuild.</div>`;
+  } else if (session) {
+    sessionBox.innerHTML = `<div class="meta-grid">
+      <div><span class="meta-label">OIDC account</span><span class="meta-value">${escapeHtml(
+        session.accountId,
+      )}</span></div>
+      <div><span class="meta-label">Issuer</span><span class="meta-value">${escapeHtml(
+        session.issuer,
+      )}</span></div>
+      <div><span class="meta-label">Scopes</span><span class="meta-value">${escapeHtml(
+        session.scope,
+      )}</span></div>
+      <div><span class="meta-label">Expires</span><span class="meta-value">${escapeHtml(
+        formatTimestampNs(BigInt(Math.trunc(session.expiresAt)) * 1_000_000n),
+      )}</span></div>
+      <div><span class="meta-label">Roles from userinfo</span><span class="meta-value">${
+        session.roles.length > 0
+          ? session.roles
+              .map((role) => `<span class="tag ok">${escapeHtml(role)}</span>`)
+              .join(" ")
+          : '<span class="muted">none on the provider contract</span>'
+      }</span></div>
+    </div>`;
+  } else {
+    sessionBox.innerHTML = `<p class="muted">Sign in with your NEAR wallet through the OIDC provider. The provider proves the account with NEP-413 and the access page then reads live role NFTs from the registry. ${state.walletAccount ? "You can also preview the access page with the connected wallet until you sign in." : ""}</p>`;
+  }
+
+  if (!accountId) {
+    summary.innerHTML = "";
+    list.innerHTML = `<div class="empty"><strong>No account selected</strong>Sign in with OIDC or connect a wallet to see access labels.</div>`;
+    return;
+  }
+
+  if (state.accessLoading) {
+    summary.innerHTML = "";
+    list.innerHTML = `<div class="empty"><span class="loading">Reading on-chain roles…</span></div>`;
+    return;
+  }
+
+  if (!state.accessScanned) {
+    summary.innerHTML = "";
+    list.innerHTML = `<div class="empty"><strong>Ready to check access</strong>Press Refresh roles to read memberships for <code>${escapeHtml(
+      accountId,
+    )}</code>.</div>`;
+    return;
+  }
+
+  const roleCount = state.accessMemberships.reduce(
+    (total, item) => total + item.memberships.length,
+    0,
+  );
+  summary.innerHTML = `<p class="muted small"><code>${escapeHtml(
+    accountId,
+  )}</code> holds <strong>${roleCount}</strong> role(s) across <strong>${
+    state.accessMemberships.length
+  }</strong> contract(s). ${
+    state.oidcError
+      ? `<span class="status error">${escapeHtml(state.oidcError)}</span>`
+      : "Labels come from the local role mapping and are checked against live chain data."
+  }</p>`;
+
+  if (state.accessMemberships.length === 0) {
+    list.innerHTML = `<div class="empty"><strong>No roles found</strong>This account holds no role NFTs in registry contracts. Mint a role in Owned contracts, then refresh.</div>`;
+    return;
+  }
+
+  list.innerHTML = state.accessMemberships.map(accessContractCard).join("");
+}
+
 export function renderAll(): void {
   renderTabs();
   renderWallet();
   renderFactory();
   renderOwned();
   renderRoles();
+  renderAccess();
 }
 
 export function findSnapshot(contractId: string): ContractSnapshot | null {
   return (
     state.owned.find((item) => item.record.account_id === contractId)?.snapshot ??
     state.memberships.find((item) => item.snapshot.accountId === contractId)?.snapshot ??
+    state.accessMemberships.find((item) => item.snapshot.accountId === contractId)?.snapshot ??
     null
   );
 }
@@ -522,5 +725,6 @@ export function findSnapshot(contractId: string): ContractSnapshot | null {
 export function activeStatus(): HTMLElement {
   if (state.tab === "contracts") return byId("owned-status");
   if (state.tab === "roles") return byId("roles-status");
+  if (state.tab === "access") return byId("access-status");
   return byId("deploy-status");
 }

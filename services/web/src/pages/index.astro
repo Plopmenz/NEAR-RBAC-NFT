@@ -147,6 +147,9 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
         <button class="tab" data-tab="roles" type="button" role="tab" aria-selected="false">
           3. My roles
         </button>
+        <button class="tab" data-tab="access" type="button" role="tab" aria-selected="false">
+          4. OIDC access
+        </button>
       </nav>
 
       <section class="panel" data-panel="deploy" role="tabpanel">
@@ -332,6 +335,43 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
         <p class="status" id="roles-status" role="status"></p>
         <div id="roles-summary"></div>
         <div class="card-list" id="roles-list"></div>
+      </section>
+
+      <section class="panel" data-panel="access" role="tabpanel" hidden>
+        <div class="panel-heading">
+          <div>
+            <h2>OIDC access</h2>
+            <p class="muted">
+              Sign in with your NEAR wallet through the OpenID Connect provider, then see which
+              sample access labels your live role NFTs grant. The provider proves the account;
+              roles are read directly from every registry contract.
+            </p>
+          </div>
+          <div class="stat-box">
+            <span class="stat-label">Flow</span>
+            <span class="stat-value">PKCE + NEP-413</span>
+          </div>
+        </div>
+
+        <div class="card access-card">
+          <div id="oidc-session"></div>
+          <div class="form-actions">
+            <button class="btn" id="oidc-login" type="button">Sign in with OIDC</button>
+            <button class="btn ghost" id="oidc-logout" type="button" hidden>Sign out</button>
+            <button class="btn ghost" id="access-refresh" type="button">Refresh roles</button>
+          </div>
+          <p class="status" id="access-status" role="status"></p>
+        </div>
+
+        <p class="muted small access-hint">
+          Contract owners can map roles to labels in <strong>Owned contracts → Contract
+          administration → OIDC access labels</strong>. The mapping is stored locally in this
+          browser; the role check itself is always live on-chain. If no labels are configured,
+          the page uses role names as sample access labels.
+        </p>
+
+        <div id="access-summary"></div>
+        <div class="card-list" id="access-list"></div>
       </section>
     </main>
 

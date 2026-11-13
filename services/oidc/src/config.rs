@@ -135,6 +135,12 @@ pub struct Config {
     /// Scopes accepted by the provider.
     #[serde(default = "default_allowed_scopes")]
     pub allowed_scopes: Vec<String>,
+
+    /// Browser origins allowed to call the token, userinfo and discovery endpoints with CORS.
+    /// Use this when a static web app on another origin is an OIDC client. Exact origins only,
+    /// for example `https://near-payrole.vercel.app`.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 impl Config {
@@ -188,6 +194,17 @@ impl Config {
             .any(|scope| scope.is_empty() || scope.chars().any(char::is_whitespace))
         {
             bail!("allowed_scopes entries must be non-empty and contain no whitespace");
+        }
+
+        for origin in &self.allowed_origins {
+            let parsed = Url::parse(origin)
+                .with_context(|| format!("allowed_origins entry {origin} is not a URL"))?;
+            if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+                bail!("allowed_origins entry {origin} must be an http(s) origin");
+            }
+            if parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
+                bail!("allowed_origins entry {origin} must not contain a path or query");
+            }
         }
 
         let mut ids = std::collections::HashSet::new();
@@ -284,6 +301,7 @@ mod tests {
             signing_key_path: None,
             verify_access_key: true,
             allowed_scopes: default_allowed_scopes(),
+            allowed_origins: Vec::new(),
         }
     }
 
@@ -360,5 +378,21 @@ mod tests {
     fn endpoints_are_derived_from_the_issuer() {
         let config = base_config();
         assert_eq!(config.endpoint("/token"), "https://auth.example.com/token");
+    }
+
+    #[test]
+    fn allowed_origins_must_be_exact_http_origins() {
+        let mut config = base_config();
+        config.allowed_origins = vec!["https://near-payrole.vercel.app".to_owned()];
+        config.validate().unwrap();
+
+        config.allowed_origins = vec!["https://near-payrole.vercel.app/callback".to_owned()];
+        assert!(config.validate().is_err());
+
+        config.allowed_origins = vec!["not-a-url".to_owned()];
+        assert!(config.validate().is_err());
+
+        config.allowed_origins = vec!["ftp://near-payrole.vercel.app".to_owned()];
+        assert!(config.validate().is_err());
     }
 }

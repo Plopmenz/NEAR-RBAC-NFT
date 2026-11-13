@@ -1,0 +1,80 @@
+---
+import "../../styles/global.css";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>PayRole — OIDC sign-in</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" focusable="false">
+            <path
+              d="M16 2.5 27 7v8.5c0 6.5-4.4 11.6-11 14-6.6-2.4-11-7.5-11-14V7z"
+              fill="currentColor"
+              opacity="0.16"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linejoin="round"></path>
+          </svg>
+        </span>
+        <span>Pay<span class="brand-accent">Role</span></span>
+      </a>
+    </header>
+
+    <main class="shell">
+      <section class="card">
+        <h1 class="callback-title">Completing OIDC sign-in</h1>
+        <p class="muted">
+          PayRole is exchanging the one-time authorization code for tokens with PKCE. No secret
+          is stored in the browser.
+        </p>
+        <p class="status" id="callback-status" role="status">Exchanging the authorization code…</p>
+        <p><a id="callback-home" href="/?tab=access" hidden>Return to the access page</a></p>
+      </section>
+    </main>
+
+    <script>
+      import { loadConfig } from "../../lib/config";
+      import { completeOidcLogin } from "../../lib/oidc";
+
+      const status = document.getElementById("callback-status");
+      const home = document.getElementById("callback-home") as HTMLAnchorElement | null;
+
+      function show(message: string, tone: "ok" | "error"): void {
+        if (!status) return;
+        status.textContent = message;
+        status.className = `status ${tone}`;
+      }
+
+      async function complete(): Promise<void> {
+        try {
+          const session = await completeOidcLogin(loadConfig());
+          show(`Signed in as ${session.accountId}. Redirecting to your access page…`, "ok");
+          window.setTimeout(() => {
+            window.location.replace("/?tab=access");
+          }, 900);
+        } catch (error) {
+          show(error instanceof Error ? error.message : "OIDC sign-in failed.", "error");
+          if (home) home.hidden = false;
+        }
+      }
+
+      void complete();
+    </script>
+  </body>
+</html>
+
+<style>
+  .callback-title {
+    font-size: clamp(1.6rem, 4vw, 2.4rem);
+    max-width: none;
+  }
+</style>

@@ -5,6 +5,11 @@ import {
   handleClaim,
   handleDeploy,
   handleFavorite,
+  handleFund,
+  handleOidcLogin,
+  handleOidcLogout,
+  handleRoleAccess,
+  scanAccess,
   scanOwned,
   scanRoles,
   selectTab,
@@ -18,7 +23,7 @@ export function bindEvents(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       const tab = button.dataset.tab;
-      if (tab === "deploy" || tab === "contracts" || tab === "roles") {
+      if (tab === "deploy" || tab === "contracts" || tab === "roles" || tab === "access") {
         selectTab(tab);
       }
     });
@@ -67,6 +72,18 @@ export function bindEvents(): void {
     void scanRoles(true);
   });
 
+  byId<HTMLButtonElement>("oidc-login").addEventListener("click", () => {
+    void handleOidcLogin();
+  });
+
+  byId<HTMLButtonElement>("oidc-logout").addEventListener("click", () => {
+    handleOidcLogout();
+  });
+
+  byId<HTMLButtonElement>("access-refresh").addEventListener("click", () => {
+    void scanAccess(true);
+  });
+
   byId<HTMLInputElement>("favorites-only").addEventListener("change", (event) => {
     state.favoritesOnly = (event.target as HTMLInputElement).checked;
     const url = new URL(window.location.href);
@@ -113,11 +130,24 @@ export function bindEvents(): void {
       return;
     }
     const kind = form.dataset.form;
+    if (kind === "role-access") {
+      event.preventDefault();
+      handleRoleAccess(form);
+      return;
+    }
     if (kind) {
       event.preventDefault();
       const label = kind === "mint" ? "Minting…" : kind === "burn" ? "Burning…" : "Submitting…";
       void withBusy(submit, label, () => handleAdminForm(kind, form));
     }
+  });
+
+  document.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement) || !target.matches("[data-access-role]")) return;
+    const form = target.closest<HTMLFormElement>("form");
+    const input = form?.querySelector<HTMLInputElement>('input[name="labels"]');
+    if (input) input.value = target.selectedOptions[0]?.dataset.labels ?? "";
   });
 
   document.addEventListener("click", (event) => {
@@ -129,6 +159,8 @@ export function bindEvents(): void {
     const name = action.dataset.action;
     if (name === "favorite") {
       handleFavorite(button);
+    } else if (name === "fund") {
+      void withBusy(button, "Funding…", () => handleFund(button));
     } else if (name === "claim" || name === "claim-all") {
       void withBusy(button, "Claiming…", () => handleClaim(button));
     }
