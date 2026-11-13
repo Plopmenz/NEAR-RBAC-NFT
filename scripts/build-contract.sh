@@ -18,12 +18,12 @@ cp target/wasm32-unknown-unknown/release/payrole_factory.wasm res/payrole_factor
 cp target/wasm32-unknown-unknown/release/mock_ft.wasm res/mock_ft.wasm
 
 if command -v wasm-opt >/dev/null 2>&1; then
-  wasm-opt -Oz --strip-debug --strip-producers \
+  wasm-opt -Oz --strip-debug --strip-producers --enable-bulk-memory-opt \
     res/payrole_nft.wasm -o res/payrole_nft.wasm
-  wasm-opt -Oz --strip-debug --strip-producers \
+  wasm-opt -Oz --strip-debug --strip-producers --enable-bulk-memory-opt \
     res/payrole_factory.wasm -o res/payrole_factory.wasm
   # The mock token does not need to be small, but optimizing keeps parity with the other builds.
-  wasm-opt -Oz --strip-debug --strip-producers \
+  wasm-opt -Oz --strip-debug --strip-producers --enable-bulk-memory-opt \
     res/mock_ft.wasm -o res/mock_ft.wasm
   echo "Optimized artifacts with wasm-opt -Oz"
 else

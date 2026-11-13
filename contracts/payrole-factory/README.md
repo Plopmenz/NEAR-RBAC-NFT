@@ -92,16 +92,28 @@ step and refuses to reuse an existing account:
 ```bash
 MASTER_ACCOUNT=dao.testnet ./scripts/deploy-factory.sh
 
-# Or manually with legacy near-cli:
-near deploy payrole-factory.testnet res/payrole_factory.wasm \
-  --initFunction new \
-  --initArgs "{\"code\":\"$(base64 -w0 res/payrole_nft.wasm)\"}" \
-  --initDeposit 5
+# Or manually with near-cli-rs. The base64 wasm init JSON is several hundred KiB, which exceeds
+# the kernel's per-argument limit, so pass it from a file:
+python3 - <<'PY' > /tmp/payrole-factory-init.json
+import base64, json
+with open("res/payrole_nft.wasm", "rb") as wasm:
+    print(json.dumps({"code": base64.b64encode(wasm.read()).decode("ascii")}))
+PY
+near contract deploy payrole-factory.testnet \
+  use-file res/payrole_factory.wasm \
+  with-init-call new file-args /tmp/payrole-factory-init.json \
+  prepaid-gas '150 Tgas' \
+  attached-deposit '5 NEAR' \
+  network-config testnet \
+  sign-with-keychain send
 ```
 
-On macOS use `base64 -i res/payrole_nft.wasm` instead of `base64 -w0`. The init deposit must cover
-the stored wasm (~4.1 NEAR for 399 KiB); the script defaults to 5 NEAR. Any remainder is locked
-permanently because the factory has no withdrawal method.
+The init call needs at least **150 Tgas**: `new` decodes the base64 argument and writes the
+whole child wasm into contract state, so the default 30 Tgas fails with
+`Exceeded the prepaid gas`. The init deposit must cover the stored wasm (~3.3 NEAR for the
+current ~320 KiB build); the script defaults to 5 NEAR. Any remainder is locked permanently because the factory has no withdrawal method. A fresh
+account is funded with `INIT_DEPOSIT + 1` NEAR by default (6 NEAR) so it can attach the deposit
+and pay the deploy fee; override `INIT_BALANCE` if needed.
 
 Check the deposit required per child and the pinned hash:
 
@@ -111,7 +123,7 @@ near view payrole-factory.testnet code_hash
 ```
 
 The value grows with the wasm size and the network storage price. For the current artifact it is
-roughly **4.1 NEAR** per child, because every child stores its own copy of the wasm.
+roughly **3.3 NEAR** per child, because every child stores its own copy of the wasm.
 
 Deploy a child:
 
@@ -156,7 +168,7 @@ atomically, so no account is left behind and the name can be retried.
   owner. Treat it as a discovery hint, verify `owner_id()` on the child, and hide spam locally.
 - Every child stores a full copy of the wasm. This is simple and independent, but storage-heavy.
   The documented production path is a global contract by hash (NEP-591), which burns the code
-  storage once and shares it across children; break-even is roughly 10 children for a ~399 KiB
+  storage once and shares it across children; break-even is roughly 10 children for a ~320 KiB
   wasm. That path was not used for this deployment because the global contract burns roughly
   38 NEAR and the testnet account lacks sufficient testnet NEAR.
 - Any deposit left in the factory is permanently locked because there is no withdrawal method.

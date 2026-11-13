@@ -95,7 +95,7 @@ impl RoleSource for NearRpcRoleSource {
         );
         let value = self
             .query(json!({
-                "request_type": "call",
+                "request_type": "call_function",
                 "finality": "final",
                 "account_id": self.contract_id,
                 "method_name": "roles_of",

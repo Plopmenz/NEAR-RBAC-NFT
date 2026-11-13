@@ -54,7 +54,7 @@ export async function viewFunction<T>(
     id: `${contractId}.${methodName}`,
     method: "query",
     params: {
-      request_type: "call",
+      request_type: "call_function",
       finality: "final",
       account_id: contractId,
       method_name: methodName,

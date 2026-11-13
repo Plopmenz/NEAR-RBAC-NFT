@@ -214,11 +214,11 @@ ls -lh res/payrole_nft.wasm res/payrole_factory.wasm res/mock_ft.wasm
 sha256sum res/payrole_nft.wasm
 ```
 
-**See:** all three artifacts exist. `payrole_nft.wasm` is about **399 KiB**,
-`payrole_factory.wasm` about **230 KiB**, and `mock_ft.wasm` about **137 KiB** in this release
+**See:** all three artifacts exist. `payrole_nft.wasm` is about **320 KiB**,
+`payrole_factory.wasm` about **190 KiB**, and `mock_ft.wasm` about **114 KiB** in this release
 profile (`opt-level = "z"`, LTO, one codegen unit, abort-on-panic, overflow checks, symbols
-stripped). The `sha256sum` value is the hash the factory stores and clients can pin as
-`PUBLIC_EXPECTED_CHILD_CODE_HASH`.
+stripped). Exact sizes vary with the toolchain. The `sha256sum` value is the hash the factory
+stores and clients can pin as `PUBLIC_EXPECTED_CHILD_CODE_HASH`.
 
 ### 10. Run the OIDC provider locally (optional)
 
@@ -408,19 +408,35 @@ method. The payrole-nft wasm is supplied once in the `new(code)` init call and c
 # Creates payrole-factory.testnet and stores res/payrole_nft.wasm in one transaction.
 MASTER_ACCOUNT=dao.testnet ./scripts/deploy-factory.sh
 
-# Or with the legacy near-cli manually:
-near deploy payrole-factory.testnet res/payrole_factory.wasm \
-  --initFunction new \
-  --initArgs "{\"code\":\"$(base64 -w0 res/payrole_nft.wasm)\"}" \
-  --initDeposit 5
+# Or manually with near-cli-rs. Build the init args in a file so the base64
+# wasm (several hundred KiB) never has to fit in a single command-line argument:
+python3 - <<'PY' > /tmp/payrole-factory-init.json
+import base64, json
+with open("res/payrole_nft.wasm", "rb") as wasm:
+    print(json.dumps({"code": base64.b64encode(wasm.read()).decode("ascii")}))
+PY
+near contract deploy payrole-factory.testnet \
+  use-file res/payrole_factory.wasm \
+  with-init-call new file-args /tmp/payrole-factory-init.json \
+  prepaid-gas '150 Tgas' \
+  attached-deposit '5 NEAR' \
+  network-config testnet \
+  sign-with-keychain send
 
 near view payrole-factory.testnet required_deploy_deposit
 near view payrole-factory.testnet code_hash
 ```
 
-Each child stores its own copy of the wasm, so the deposit is roughly **4.1 NEAR** and is not a
-fee: the factory forwards it to the child. A child deployed by the factory has no protocol-level
-access key and is therefore immutable. Clients should pin `code_hash()` (or set
+The init call attaches 150 Tgas because `new` decodes the base64 argument and writes the
+whole child wasm into contract state; smaller values fail with `Exceeded the prepaid gas`.
+The script creates a fresh account with `INIT_DEPOSIT + 1` NEAR by default (6 NEAR), so the
+account can attach the 5 NEAR deposit and still pay the deploy fee. Override `INIT_BALANCE` if
+you use a different `INIT_DEPOSIT`.
+
+Each child stores its own copy of the wasm, so the deposit is roughly **3.3 NEAR** for the
+current build and is not a fee: the factory forwards it to the child. Query
+`required_deploy_deposit()` for the live value. A child deployed by the factory has no
+protocol-level access key and is therefore immutable. Clients should pin `code_hash()` (or set
 `PUBLIC_EXPECTED_CHILD_CODE_HASH` in the web app) so they deploy against code they reviewed. See
 [`contracts/payrole-factory/README.md`](contracts/payrole-factory/README.md) for the full API and
 caveats, and [Production: global contract by hash](#production-global-contract-by-hash) for the
@@ -704,7 +720,7 @@ curl -s https://rpc.testnet.near.org \
     \"id\":\"roles\",
     \"method\":\"query\",
     \"params\":{
-      \"request_type\":\"call\",
+      \"request_type\":\"call_function\",
       \"finality\":\"final\",
       \"account_id\":\"payrole.testnet\",
       \"method_name\":\"roles_of\",
@@ -787,8 +803,8 @@ use the global-by-hash path for this hackathon deployment is funding: deploying 
 contract burns roughly **38 NEAR** for the current wasm, and the testnet account used here does
 not have sufficient testnet NEAR for that. The local path only stakes a per-child deposit, which
 is forwarded to the child. It is also simple and keeps each child independent. The trade-off is
-storage: every child stores its own copy of the ~0.39 MiB payrole-nft wasm, so each deployment costs
-roughly 4.1 NEAR.
+storage: every child stores its own copy of the ~0.31 MiB payrole-nft wasm, so each deployment costs
+roughly 3.3 NEAR.
 
 The production path is a **global contract stored by hash** (NEP-591). A global contract is
 deployed once to the network and identified by its SHA-256 hash, and accounts can use it without
@@ -1070,9 +1086,10 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 - Children deployed through the factory are immutable because they have no access keys. Plan
   for upgrades before using it for a long-lived production contract.
 - Every child stores a full copy of the wasm, so deployment is storage-heavy. The required
-  deposit is roughly 4.1 NEAR at current prices. The documented global-by-hash upgrade removes
-  this per-child cost, but it was not used here because deploying the global contract burns
-  roughly 38 NEAR and the testnet account lacks sufficient testnet NEAR.
+  deposit is roughly 3.3 NEAR for the current build (query `required_deploy_deposit()`). The
+  documented global-by-hash upgrade removes this per-child cost, but it was not used here because
+  deploying the global contract burns roughly 38 NEAR and the testnet account lacks sufficient
+  testnet NEAR.
 - Any deposit left in the immutable factory after a deployment is permanently locked because
   there is no withdrawal method.
 - Owner changes are indexed only when the child can notify the factory. The notification is
