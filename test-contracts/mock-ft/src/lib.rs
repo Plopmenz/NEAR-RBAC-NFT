@@ -7,6 +7,14 @@ use near_sdk::json_types::U128;
 use near_sdk::store::LookupMap;
 use near_sdk::{env, near, require, AccountId, NearToken, PanicOnDefault, Promise};
 
+#[near(serializers = [json])]
+pub struct FtMetadata {
+    pub spec: String,
+    pub name: String,
+    pub symbol: String,
+    pub decimals: u8,
+}
+
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct MockFt {
@@ -44,9 +52,13 @@ impl MockFt {
         U128(0)
     }
 
-    pub fn ft_metadata(&self) -> String {
-        "{\"spec\":\"ft-1.0.0\",\"name\":\"Mock Token\",\"symbol\":\"MOCK\",\"decimals\":6}"
-            .to_owned()
+    pub fn ft_metadata(&self) -> FtMetadata {
+        FtMetadata {
+            spec: "ft-1.0.0".to_owned(),
+            name: "Mock Token".to_owned(),
+            symbol: "MOCK".to_owned(),
+            decimals: 6,
+        }
     }
 
     #[payable]

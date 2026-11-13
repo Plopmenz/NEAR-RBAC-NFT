@@ -6,6 +6,7 @@ import {
   findRole,
   isRoleOwner,
   manageableRoles,
+  parseFtMetadata,
 } from "../src/lib/payrole";
 import type { ContractSnapshot, RoleView } from "../src/lib/types";
 
@@ -81,5 +82,41 @@ describe("role permissions", () => {
     const contract = snapshot();
     expect(canManageRole(contract, contract.roles[0], null)).toBe(false);
     expect(canManageContract(contract, null)).toBe(false);
+  });
+});
+
+describe("parseFtMetadata", () => {
+  it("parses metadata returned as an object", () => {
+    expect(
+      parseFtMetadata(
+        { decimals: 6, symbol: "USDC", name: "USD Coin" },
+        "usdc.testnet",
+      ),
+    ).toEqual({ decimals: 6, symbol: "USDC", name: "USD Coin", fallback: false });
+  });
+
+  it("parses metadata returned as a nested JSON string", () => {
+    expect(
+      parseFtMetadata(
+        '{"spec":"ft-1.0.0","name":"Mock Token","symbol":"MOCK","decimals":6}',
+        "payrole-mock-ft.testnet",
+      ),
+    ).toEqual({ decimals: 6, symbol: "MOCK", name: "Mock Token", fallback: false });
+  });
+
+  it("fills missing symbols and names from the token account", () => {
+    expect(parseFtMetadata({ decimals: 0 }, "token.testnet")).toEqual({
+      decimals: 0,
+      symbol: "token.testnet",
+      name: "token.testnet",
+      fallback: false,
+    });
+  });
+
+  it("rejects malformed metadata", () => {
+    expect(parseFtMetadata("not json", "token.testnet")).toBeNull();
+    expect(parseFtMetadata({ decimals: "six" }, "token.testnet")).toBeNull();
+    expect(parseFtMetadata({ decimals: -1 }, "token.testnet")).toBeNull();
+    expect(parseFtMetadata(null, "token.testnet")).toBeNull();
   });
 });

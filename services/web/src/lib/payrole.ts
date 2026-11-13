@@ -13,33 +13,51 @@ import type {
 const PAGE_SIZE = 100;
 const READ_CONCURRENCY = 6;
 
+function fallbackFtMetadata(tokenAccountId: string): FtMetadata {
+  return {
+    decimals: 0,
+    symbol: tokenAccountId,
+    name: tokenAccountId,
+    fallback: true,
+  };
+}
+
+/**
+ * Decodes NEP-141 metadata. Most contracts return a JSON object, but some return a JSON string
+ * containing the object (for example the bundled demo token), so accept both shapes.
+ */
+export function parseFtMetadata(raw: unknown, tokenAccountId: string): FtMetadata | null {
+  let value = raw;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const metadata = value as { decimals?: unknown; symbol?: unknown; name?: unknown };
+  const decimals = Number(metadata.decimals);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) return null;
+
+  return {
+    decimals,
+    symbol: typeof metadata.symbol === "string" && metadata.symbol ? metadata.symbol : tokenAccountId,
+    name: typeof metadata.name === "string" && metadata.name ? metadata.name : tokenAccountId,
+    fallback: false,
+  };
+}
+
 export async function loadFtMetadata(
   rpcUrl: string,
   tokenAccountId: string,
 ): Promise<FtMetadata> {
   try {
-    const metadata = await viewFunction<{
-      decimals?: number;
-      symbol?: string;
-      name?: string;
-    }>(rpcUrl, tokenAccountId, "ft_metadata");
-    const decimals = Number(metadata.decimals);
-    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-      throw new Error("invalid decimals");
-    }
-    return {
-      decimals,
-      symbol: metadata.symbol || tokenAccountId,
-      name: metadata.name || tokenAccountId,
-      fallback: false,
-    };
+    const raw = await viewFunction<unknown>(rpcUrl, tokenAccountId, "ft_metadata");
+    return parseFtMetadata(raw, tokenAccountId) ?? fallbackFtMetadata(tokenAccountId);
   } catch {
-    return {
-      decimals: 0,
-      symbol: tokenAccountId,
-      name: tokenAccountId,
-      fallback: true,
-    };
+    return fallbackFtMetadata(tokenAccountId);
   }
 }
 

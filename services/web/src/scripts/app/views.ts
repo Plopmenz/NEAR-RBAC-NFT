@@ -14,7 +14,7 @@ import {
 import {
   canManageContract,
   canManageRole,
-  manageableRoles,
+  isRoleOwner,
 } from "../../lib/payrole";
 import type {
   ContractSnapshot,
@@ -318,8 +318,9 @@ function membershipTable(item: MembershipContract): string {
 
 function membershipCard(item: MembershipContract): string {
   const snapshot = item.snapshot;
-  const managed = manageableRoles(snapshot, state.walletAccount);
-  const canAdmin = canManageContract(snapshot, state.walletAccount);
+  // Role administration is for delegating role owners. Contract-wide controls stay in the
+  // Owned contracts tab so the two administration surfaces do not overlap.
+  const managed = snapshot.roles.filter((role) => isRoleOwner(role, state.walletAccount));
   const accountId = state.rolesAddress;
   return `<article class="card">
     <div class="card-head">
@@ -347,7 +348,6 @@ function membershipCard(item: MembershipContract): string {
       managed.length > 0
         ? `<details class="details"><summary>Role administration</summary>
             ${roleTable(snapshot, managed)}
-            ${canAdmin ? `<div class="subtle-divider"></div>${ownerAdminForms(snapshot)}` : ""}
           </details>`
         : ""
     }
