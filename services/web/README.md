@@ -7,6 +7,11 @@ The app is fully static. It reads NEAR JSON-RPC directly and signs writes with
 [`@near-wallet-selector`](https://github.com/near/wallet-selector); there is no backend or
 indexer.
 
+PayRole exists so contributor DAOs can make work legible and payment predictable: roles are
+public, each role carries its own salary, and access follows the role instead of a manual list.
+This app is the DAO-facing surface for that model — deploy a contract, publish roles, fund
+payroll, delegate administration, and see exactly what a contributor holds and can claim.
+
 ## What it does
 
 - **Deploy** a new `payrole-nft` at `{name}.{factory}` in one wallet transaction. The owner can be

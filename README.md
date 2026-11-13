@@ -2,15 +2,39 @@
 
 **On-chain roles and payroll for NEAR DAOs.**
 
-PayRole combines non-transferable **NEP-245 role NFTs**, on-chain **role-gated access checks**,
-and **NEP-141 salary streaming** — plus a **factory** for one-transaction deployments, a Rust
-**OpenID Connect provider** that turns on-chain roles into off-chain service access, and an
-Astro web app for deploying and managing contracts.
+DAOs struggle to keep a contributor community alive. Newcomers can’t tell what they could do or
+what they’d be paid for, responsibilities are informal, and every payment, raise, or removal needs
+a vote that consumes many people’s time. Contributors have no assurance of payment, and access to
+chat, repos, and tools is granted by hand.
 
-The contract is designed to be owned by a Sputnik DAO or Trezu account. Each role is
-represented by a non-transferable NFT membership. Role owners can mint and burn memberships,
-other contracts can query `has_role`, and members can claim salary in the configured NEP-141
-token.
+PayRole turns each contributor role into a non-transferable **NEP-245 NFT**, managed on NEAR by
+the DAO itself:
+
+- **Clear responsibilities.** Roles are public. Someone wearing several hats holds several role
+  NFTs, so contributors can see what work exists before they ask.
+- **Pay per role.** Each role has a **NEP-141** salary that accrues per interval and is claimed
+  on-chain. More roles earn more, and harder or less desirable roles can pay more — with no
+  recurring payment vote.
+- **Bounded risk.** Salaries come from a separate budget held by the contract, not the DAO
+  treasury. The DAO chooses how much to allocate, tops it up periodically, and can vote to change
+  salaries at any time. A bug can only drain that budget, not the treasury.
+- **Delegation.** Role owners can mint their own role, so minor decisions do not need a vote.
+- **Access bundled with the role.** Contracts call `has_role`, and the included OIDC provider lets
+  Web2 apps sign in with a NEAR wallet and receive roles read from the chain.
+- **One-action retirement.** Burning a role stops pay and revokes access immediately.
+- **Single source of truth.** The contributor graph lives on-chain, with no manual spreadsheet or
+  indexer step.
+
+NEAR fits the design: NEP-245 for non-transferable roles, NEP-141 for salaries, cheap
+sub-account deployment through a factory so each DAO gets its own contract, and wallet
+signatures instead of passwords.
+
+Around the contracts, PayRole ships an immutable **factory** for one-transaction deployments, a
+Rust **OpenID Connect provider** that turns on-chain roles into off-chain service access, and an
+Astro web app for deploying and managing contracts. The contract is designed to be owned by a
+Sputnik DAO or Trezu account; role owners can mint and burn their own memberships, other contracts
+can query `has_role`, and members claim salary in the configured NEP-141 token. Live on NEAR
+testnet: `payrole-factory.testnet`. Hosted demo: <https://near-payrole.vercel.app>.
 
 ```
                      owns / governs
@@ -239,7 +263,7 @@ the curl URLs) to another port. For the hosted web client, register
 ## Contents
 
 - [Judge walkthrough: do X, see Y](#judge-walkthrough-do-x-see-y)
-- [Why role NFTs?](#why-role-nfts)
+- [What the role NFT design fixes](#what-the-role-nft-design-fixes)
 - [Repository layout](#repository-layout)
 - [Quick start](#quick-start)
 - [Role and token identifiers](#role-and-token-identifiers)
@@ -254,20 +278,27 @@ the curl URLs) to another port. For the hosted web client, register
 - [Testing](#testing)
 - [License](#license)
 
-## Why role NFTs?
+## What the role NFT design fixes
 
-- **Composable:** roles are NEP-245 tokens, so wallets, indexers, and marketplaces can display
-  them without a custom contract interface.
-- **Non-transferable:** a membership cannot be sold or moved. Burning it removes access
-  immediately; only the contract owner or the role owner can burn it.
-- **Delegated administration:** each role can have its own owner (for example an HR account),
-  while the DAO keeps ultimate control.
-- **On-chain checks:** other contracts can call `has_role` / `has_role_id` before performing a
-  gated action.
-- **Salary attached:** a role can pay a fixed amount per interval in a NEP-141 token, with
-  claim timestamps managed by the contract.
-- **Off-chain SSO:** the included OIDC provider authenticates a NEAR account with NEP-413 and
-  authorizes it using the live on-chain roles.
+- **Roles become legible.** Each responsibility is a NEP-245 token, so wallets, indexers, and the
+  PayRole UI can display who holds which role without a private spreadsheet.
+- **Multiple hats are explicit.** A contributor with two responsibilities holds two role NFTs and
+  earns both salaries; there is no hidden side agreement.
+- **Payment stops needing a vote.** A role carries a fixed NEP-141 salary per interval, with claim
+  timestamps managed by the contract. Contributors can verify what they will be paid before they
+  start.
+- **Risk stays bounded.** Salary comes from a purpose-specific contract budget, not the DAO
+  treasury. The DAO decides the allocation and tops it up when needed.
+- **Administration is delegated.** Each role can have its own owner (for example an HR account)
+  that mints and burns memberships, while the DAO keeps ultimate control.
+- **Access follows the role.** Other contracts call `has_role` / `has_role_id`; the included OIDC
+  provider authenticates a NEAR account with NEP-413 and authorizes it using live on-chain roles.
+- **Retirement is one action.** Burning a membership removes access immediately and pays any
+  pending salary by default.
+- **Non-transferable by design.** A membership cannot be sold or moved, so paid access cannot leak
+  to someone the DAO did not approve.
+- **Composable.** Roles are standard NEP-245 tokens, so wallets, indexers, and other contracts can
+  read them without a custom integration.
 
 ## Repository layout
 

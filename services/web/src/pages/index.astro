@@ -5,7 +5,7 @@ import { DEFAULT_PAYOUT_INTERVAL_NS } from "../lib/config";
 
 const siteUrl = (import.meta.env.PUBLIC_SITE_URL ?? "").trim().replace(/\/+$/, "");
 const description =
-  "PayRole: on-chain roles and payroll for NEAR DAOs. Deploy non-transferable role NFTs with NEP-141 salary streaming in one transaction.";
+  "PayRole turns contributor roles into non-transferable NEP-245 NFTs with NEP-141 salaries, delegated minting, and role-gated access for NEAR DAOs.";
 const socialImage = siteUrl ? `${siteUrl}/og.png` : "";
 const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).toString();
 ---
@@ -72,12 +72,14 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
     <main class="shell">
       <section class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">Roles as non-transferable NFTs</p>
+          <p class="eyebrow">Roles, pay, and access in one place</p>
           <h1>On-chain roles and payroll for NEAR DAOs.</h1>
           <p class="lede">
-            Deploy a PayRole contract in one transaction, grant roles as non-transferable NEP-245
-            NFTs, and let members claim NEP-141 salary per role. No indexer: discovery is read
-            directly from the factory registry and each contract.
+            DAOs lose contributors because responsibilities are informal, every payment needs a
+            vote, and access is granted by hand. PayRole makes each role a public,
+            non-transferable NFT with its own NEP-141 salary, delegated minting, and role-gated
+            access. Newcomers can see what to do and what it pays; contributors get paid without
+            recurring votes.
           </p>
         </div>
         <div class="hero-art">
@@ -134,6 +136,52 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
         </div>
       </section>
 
+      <section class="why-panel" aria-labelledby="why-title">
+        <div class="why-heading">
+          <h2 id="why-title">Built for contributor DAOs</h2>
+          <p class="muted">
+            The contributor graph is the product: public responsibilities, predictable pay, and
+            access that follows the role instead of a manual spreadsheet.
+          </p>
+        </div>
+        <div class="why-grid">
+          <article class="why-card">
+            <h3>See the work</h3>
+            <p>
+              Roles are public NFTs. Several hats means several role NFTs, not a private agreement.
+            </p>
+          </article>
+          <article class="why-card">
+            <h3>Pay without votes</h3>
+            <p>
+              Each role streams a NEP-141 salary per interval. More roles earn more, automatically.
+            </p>
+          </article>
+          <article class="why-card">
+            <h3>Bound the downside</h3>
+            <p>Salaries draw from the contract's payroll budget, never the DAO treasury directly.</p>
+          </article>
+          <article class="why-card">
+            <h3>Delegate minting</h3>
+            <p>Role owners can add or remove contributors without a DAO-wide vote for every change.</p>
+          </article>
+          <article class="why-card">
+            <h3>Bundle access</h3>
+            <p>
+              Contracts check <code>has_role</code>; Web2 apps sign in through OIDC with the same
+              role.
+            </p>
+          </article>
+          <article class="why-card">
+            <h3>Retire in one action</h3>
+            <p>
+              Burning a role stops pay and revokes access immediately, with pending salary paid by
+              default.
+            </p>
+          </article>
+        </div>
+      </section>
+
       <div class="warning" id="config-warning" hidden></div>
       <div class="notice" id="global-notice" hidden role="status"></div>
 
@@ -155,11 +203,11 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
       <section class="panel" data-panel="deploy" role="tabpanel">
         <div class="panel-heading">
           <div>
-            <h2>Deploy a PayRole contract</h2>
+            <h2>Deploy your DAO's payroll</h2>
             <p class="muted">
               The factory creates <code>{"{name}.{factory}"}</code>, deploys the wasm, and initializes
-              the contract with the owner you choose. The owner can be a DAO, Trezu, or any NEAR
-              account.
+              the contract with the owner you choose. The owner should be the DAO or Trezu account
+              that governs roles and the payroll budget.
             </p>
           </div>
           <div id="factory-summary" class="stat-box">
@@ -195,7 +243,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
               />
               <small>
                 Use your DAO/Trezu account. The connected wallet pays for deployment and must hold
-                enough NEAR.
+                enough NEAR. This account governs roles, salaries, and the payroll budget.
               </small>
             </label>
 
@@ -256,13 +304,14 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
           </form>
 
           <aside class="card aside-card">
-            <h3>What you get</h3>
+            <h3>What the DAO gets</h3>
             <ul class="check-list">
-              <li>Non-transferable NEP-245 role NFTs.</li>
+              <li>Public, non-transferable NEP-245 role NFTs.</li>
               <li>Per-role NEP-141 salary, paid per full interval.</li>
-              <li>Role-owned mint and burn administration.</li>
-              <li>On-chain <code>has_role</code> checks for other contracts.</li>
-              <li>Optional OIDC SSO backed by live on-chain roles.</li>
+              <li>A separate payroll budget the DAO can cap and top up.</li>
+              <li>Delegated mint/burn authority for role owners.</li>
+              <li>On-chain <code>has_role</code> checks and OIDC SSO.</li>
+              <li>One-action retirement that stops pay and access.</li>
             </ul>
             <h3>Deployment cost</h3>
             <p class="muted">
@@ -278,10 +327,11 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
       <section class="panel" data-panel="contracts" role="tabpanel" hidden>
         <div class="panel-heading">
           <div>
-            <h2>Contracts you own</h2>
+            <h2>Your DAO's roles and budget</h2>
             <p class="muted">
               Scans the factory registry and verifies each child's live <code>owner_id()</code>.
-              Anyone can deploy a contract with your account as owner, so favorite the real ones.
+              From here the DAO creates public roles, sets per-role salaries, delegates role owners,
+              tops up the payroll budget, and retires contributors.
             </p>
           </div>
         </div>
@@ -311,10 +361,11 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
       <section class="panel" data-panel="roles" role="tabpanel" hidden>
         <div class="panel-heading">
           <div>
-            <h2>Roles you hold</h2>
+            <h2>Work and pay you can see</h2>
             <p class="muted">
               Shows each role membership, the time until the next payout, the claimable amount, and
-              a claim button. Enter any address or use the connected wallet.
+              a claim button. Pay is guaranteed by the role, not by a recurring vote. Enter any
+              address or use the connected wallet.
             </p>
           </div>
         </div>
@@ -340,11 +391,11 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
       <section class="panel" data-panel="access" role="tabpanel" hidden>
         <div class="panel-heading">
           <div>
-            <h2>OIDC access</h2>
+            <h2>Access that follows the role</h2>
             <p class="muted">
               Sign in with your NEAR wallet through the OpenID Connect provider, then see which
-              sample access labels your live role NFTs grant. The provider proves the account;
-              roles are read directly from every registry contract.
+              access labels your live role NFTs grant. Web2 apps get the same role the DAO manages
+              on-chain, without a separate password or manual access list.
             </p>
           </div>
           <div class="stat-box">
@@ -376,7 +427,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
     </main>
 
     <footer class="footer">
-      <span>PayRole · hackathon project, not audited</span>
+      <span>PayRole · on-chain roles and payroll for NEAR DAOs · hackathon project, not audited</span>
       <span>
         <a href="https://github.com/Plopmenz/NEAR-RBAC-NFT" rel="noreferrer">Source</a>
       </span>
