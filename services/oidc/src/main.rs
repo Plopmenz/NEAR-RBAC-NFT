@@ -2,11 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use rbac_oidc::clock::{Clock, SystemClock};
-use rbac_oidc::config::Config;
-use rbac_oidc::keys::KeyMaterial;
-use rbac_oidc::roles::{NearRpcRoleSource, RoleSource};
-use rbac_oidc::{build_router, AppState};
+use payrole_oidc::clock::{Clock, SystemClock};
+use payrole_oidc::config::Config;
+use payrole_oidc::keys::KeyMaterial;
+use payrole_oidc::roles::{NearRpcRoleSource, RoleSource};
+use payrole_oidc::{build_router, AppState};
 use tokio::time::MissedTickBehavior;
 use tracing_subscriber::EnvFilter;
 
@@ -15,13 +15,13 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("rbac_oidc=info,tower_http=info")),
+                .unwrap_or_else(|_| EnvFilter::new("payrole_oidc=info,tower_http=info")),
         )
         .init();
 
     let config_path = std::env::args()
         .nth(1)
-        .or_else(|| std::env::var("RBAC_OIDC_CONFIG").ok())
+        .or_else(|| std::env::var("PAYROLE_OIDC_CONFIG").ok())
         .unwrap_or_else(|| "config.toml".to_owned());
     let config = Config::load(&config_path)?;
 
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
 
     spawn_store_sweeper(state.clone());
 
-    tracing::info!(%address, "rbac-oidc listening");
+    tracing::info!(%address, "payrole-oidc listening");
 
     axum::serve(listener, build_router(state))
         .with_graceful_shutdown(shutdown_signal())

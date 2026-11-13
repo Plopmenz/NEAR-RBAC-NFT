@@ -3,7 +3,7 @@
 use near_sdk::json_types::{U128, U64};
 use near_sdk::test_utils::get_logs;
 use near_sdk::{NearToken, PromiseOrValue};
-use rbac_common::{role_id, token_id};
+use payrole_common::{role_id, token_id};
 
 use super::helpers::*;
 use crate::{Contract, MAX_ROLES_PER_ACCOUNT};

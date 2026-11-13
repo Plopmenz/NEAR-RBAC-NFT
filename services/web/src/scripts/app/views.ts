@@ -13,7 +13,7 @@ import {
   canManageContract,
   canManageRole,
   manageableRoles,
-} from "../../lib/rbac";
+} from "../../lib/payrole";
 import type {
   ContractSnapshot,
   MembershipContract,
@@ -369,7 +369,7 @@ export function renderFactory(): void {
   if (info.codeLen === 0) {
     warning.hidden = false;
     warning.textContent =
-      "The factory has no rbac-nft wasm. It was not initialized correctly; deploy a new factory account.";
+      "The factory has no payrole-nft wasm. It was not initialized correctly; deploy a new factory account.";
     submit.disabled = true;
     note.textContent = `Registry: ${info.contractCount} contract(s).`;
     return;

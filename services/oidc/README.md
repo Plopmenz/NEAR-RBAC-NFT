@@ -1,9 +1,9 @@
-# rbac-oidc
+# payrole-oidc
 
 An OpenID Connect provider that authenticates NEAR accounts with **NEP-413** and authorizes
-them using the role NFTs in a deployed [`rbac-nft`](../../contracts/rbac-nft) contract.
+them using the role NFTs in a deployed [`payrole-nft`](../../contracts/payrole-nft) contract.
 
-Part of the [NEAR RBAC NFT](../../README.md) workspace. The root README covers the contract,
+Part of the [PayRole](../../README.md) workspace. The root README covers the contract,
 architecture, and security model; this file focuses on running the service.
 
 ## How a login works
@@ -48,7 +48,7 @@ Copy [`config.example.toml`](config.example.toml) to `config.toml` (git-ignored)
 | `issuer` | required | Public HTTPS URL, no trailing slash. Used as `iss` and discovery base. |
 | `listen` | `127.0.0.1:8080` | Socket address to bind. |
 | `rpc_url` | required | NEAR JSON-RPC used for `roles_of` and `view_access_key`. |
-| `contract_id` | required | Deployed `rbac-nft` account. |
+| `contract_id` | required | Deployed `payrole-nft` account. |
 | `clients` | required | At least one `[[clients]]` table. |
 | `nep413_recipient` | issuer host | Must match the recipient used by the wallet. |
 | `nep413_callback_url` | unset | If set, it is included in the signed payload; wallets must use the same value. |
@@ -80,10 +80,10 @@ Public clients (no secret) must use PKCE. Confidential clients can use
 
 ```bash
 # From the repository root.
-cargo run -p rbac-oidc --release -- services/oidc/config.toml
+cargo run -p payrole-oidc --release -- services/oidc/config.toml
 
 # Or point at a config with an environment variable.
-RBAC_OIDC_CONFIG=/etc/rbac-oidc/config.toml rbac-oidc
+PAYROLE_OIDC_CONFIG=/etc/payrole-oidc/config.toml payrole-oidc
 ```
 
 Generate a persistent signing key before the first production start:
@@ -112,12 +112,12 @@ per-IP request throttling itself.
 Build from the repository root so the workspace and lockfile are available:
 
 ```bash
-docker build -f services/oidc/Dockerfile -t rbac-oidc .
+docker build -f services/oidc/Dockerfile -t payrole-oidc .
 
 docker run --rm -p 8080:8080 \
   -v "$PWD/services/oidc/config.toml:/app/config.toml:ro" \
   -v "$PWD/services/oidc/signing-key.pem:/app/signing-key.pem:ro" \
-  rbac-oidc
+  payrole-oidc
 ```
 
 The image runs as an unprivileged user and uses `rustls` (no OpenSSL runtime dependency).
@@ -215,7 +215,7 @@ ID token: the same identity fields plus `auth_time`, `sid`, optional `nonce`,
 ## Tests
 
 ```bash
-cargo test -p rbac-oidc
+cargo test -p payrole-oidc
 ```
 
 This runs the unit tests and the end-to-end HTTP flow in `tests/oidc_flow.rs` (discovery,

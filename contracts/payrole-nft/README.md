@@ -1,9 +1,9 @@
-# rbac-nft
+# payrole-nft
 
 Non-transferable **NEP-245** role NFTs with role-gated administration and **NEP-141 salary
 streaming**. The contract is intended to be owned by a Sputnik DAO or Trezu account.
 
-This crate is part of the [NEAR RBAC NFT](../../README.md) workspace. The root README has
+This crate is part of the [PayRole](../../README.md) workspace. The root README has
 the full project guide, OIDC flow, and security model.
 
 ## Identifiers
@@ -129,29 +129,29 @@ Burns use event `mt_burn` and include `authorized_id` when the caller is not the
 ## Example calls
 
 ```bash
-near call rbac.testnet set_role_salary \
+near call payrole.testnet set_role_salary \
   '{"role":"admin","salary":"1000000000000000000000000"}' \
   --accountId dao.testnet
 
-near call rbac.testnet set_role_owner \
+near call payrole.testnet set_role_owner \
   '{"role":"admin","owner":"hr.testnet"}' \
   --accountId dao.testnet
 
-near call rbac.testnet mint_role \
+near call payrole.testnet mint_role \
   '{"account_id":"alice.testnet","role":"admin"}' \
   --accountId hr.testnet \
   --deposit 0.011
 
 # Burn removes access and pays accrued salary first. Pass `"pay_pending": false` to forfeit it.
-near call rbac.testnet burn_role \
+near call payrole.testnet burn_role \
   '{"account_id":"alice.testnet","role":"admin","pay_pending":true}' \
   --accountId hr.testnet \
   --gas 150000000000000
 
-near view rbac.testnet has_role '{"account_id":"alice.testnet","role":"admin"}'
-near view rbac.testnet roles_of '{"account_id":"alice.testnet"}'
+near view payrole.testnet has_role '{"account_id":"alice.testnet","role":"admin"}'
+near view payrole.testnet roles_of '{"account_id":"alice.testnet"}'
 
-near call rbac.testnet claim \
+near call payrole.testnet claim \
   '{"account_id":"alice.testnet"}' \
   --accountId alice.testnet \
   --gas 100000000000000

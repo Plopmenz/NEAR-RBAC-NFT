@@ -11,7 +11,7 @@ use near_sdk::{test_vm_config, testing_env, AccountId, NearToken, PromiseResult,
 
 use crate::Contract;
 
-pub const CONTRACT_ID: &str = "rbac.test.near";
+pub const CONTRACT_ID: &str = "payrole.test.near";
 pub const OWNER_ID: &str = "dao.test.near";
 pub const SALARY_TOKEN_ID: &str = "salary.test.near";
 pub const INTERVAL_NS: u64 = 1_000_000_000;

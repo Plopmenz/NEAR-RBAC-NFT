@@ -1,6 +1,6 @@
 //! Minimal NEP-141 token for sandbox tests.
 //!
-//! It supports only the surface the RBAC contract needs: balances, metadata, `ft_transfer`, and a
+//! It supports only the surface the PayRole contract needs: balances, metadata, `ft_transfer`, and a
 //! switch that makes transfers fail so the callback rollback paths can be exercised.
 
 use near_sdk::json_types::U128;
@@ -16,7 +16,7 @@ pub struct MockFt {
 
 #[near]
 impl MockFt {
-    /// `seed` is required so deploying this contract with the RBAC init args fails on purpose.
+    /// `seed` is required so deploying this contract with the PayRole init args fails on purpose.
     #[init]
     pub fn new(seed: u64) -> Self {
         require!(seed > 0, "seed must be positive");

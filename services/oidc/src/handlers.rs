@@ -773,7 +773,7 @@ mod tests {
             issuer: "https://auth.example.com".to_owned(),
             listen: "127.0.0.1:0".to_owned(),
             rpc_url: "https://rpc.example.com".to_owned(),
-            contract_id: "rbac.testnet".to_owned(),
+            contract_id: "payrole.testnet".to_owned(),
             clients: vec![client()],
             nep413_recipient: None,
             nep413_callback_url: None,

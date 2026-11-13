@@ -7,7 +7,7 @@ import {
 } from "../../lib/factory";
 import { loadFavorites, saveFavorites, toggleFavorite } from "../../lib/favorites";
 import { formatNear, parseNear, parseUnits } from "../../lib/format";
-import { loadMembershipContracts, loadOwnedContracts } from "../../lib/rbac";
+import { loadMembershipContracts, loadOwnedContracts } from "../../lib/payrole";
 import { getFinalBlockTimestampNs } from "../../lib/rpc";
 import type { FactoryContractRecord } from "../../lib/types";
 import {

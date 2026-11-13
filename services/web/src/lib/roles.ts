@@ -1,5 +1,5 @@
 /**
- * Role ids must match `rbac-common`:
+ * Role ids must match `payrole-common`:
  *
  *   role_id = u64::from_be_bytes(SHA-256(role_name)[0..8])
  *

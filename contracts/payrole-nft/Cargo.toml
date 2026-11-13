@@ -1,6 +1,6 @@
 [package]
-name = "rbac-factory"
-description = "Factory and on-chain registry for RBAC role NFT contracts"
+name = "payrole-nft"
+description = "Non-transferable NEP-245 role NFTs with role-gated administration and salary streaming"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,8 @@ sandbox = []
 
 [dependencies]
 near-sdk.workspace = true
+payrole-common.workspace = true
+borsh.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
@@ -24,4 +26,4 @@ near-sdk = { workspace = true, features = ["unit-testing"] }
 near-parameters = "0.38"
 near-workspaces = "0.24"
 serde_json.workspace = true
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

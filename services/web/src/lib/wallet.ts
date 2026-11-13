@@ -30,12 +30,12 @@ export async function initWallet(config: AppConfig): Promise<WalletHandle> {
     modules: [setupMyNearWallet()],
   });
   // Wallet modules require a contract for the sign-in state. Use the factory as the stable
-  // anchor; calls to individual rbac-nft children still work and fall back to a wallet
+  // anchor; calls to individual payrole-nft children still work and fall back to a wallet
   // confirmation when they are outside the factory's function-call key scope.
   const modal = setupModal(selector, {
     contractId: config.factoryContractId || undefined,
     theme: "dark",
-    description: "Sign in to deploy and manage RBAC role NFTs.",
+    description: "Sign in to deploy and manage PayRole contracts.",
   });
 
   return { selector, modal };

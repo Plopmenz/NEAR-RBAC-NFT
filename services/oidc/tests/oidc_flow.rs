@@ -12,13 +12,13 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use http_body_util::BodyExt;
+use payrole_oidc::clock::Clock;
+use payrole_oidc::config::{ClientConfig, Config};
+use payrole_oidc::keys::KeyMaterial;
+use payrole_oidc::roles::{RoleSource, RoleSourceError};
+use payrole_oidc::tokens::{self, AccessClaims, IdClaims};
+use payrole_oidc::{build_router, AppState};
 use rand::rngs::OsRng;
-use rbac_oidc::clock::Clock;
-use rbac_oidc::config::{ClientConfig, Config};
-use rbac_oidc::keys::KeyMaterial;
-use rbac_oidc::roles::{RoleSource, RoleSourceError};
-use rbac_oidc::tokens::{self, AccessClaims, IdClaims};
-use rbac_oidc::{build_router, AppState};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
@@ -27,7 +27,7 @@ use url::Url;
 
 const ISSUER: &str = "https://auth.example.com";
 const RECIPIENT: &str = "auth.example.com";
-const CONTRACT: &str = "rbac.testnet";
+const CONTRACT: &str = "payrole.testnet";
 const APP: &str = "demo-app";
 const APP_REDIRECT: &str = "https://app.example.com/callback";
 const SERVICE: &str = "service-app";
@@ -223,7 +223,7 @@ fn public_key(key: &SigningKey) -> String {
 }
 
 fn sign_with(key: &SigningKey, message: &str, nonce: [u8; 32]) -> String {
-    let digest = rbac_oidc::nep413::signing_hash(message, nonce, RECIPIENT, None);
+    let digest = payrole_oidc::nep413::signing_hash(message, nonce, RECIPIENT, None);
     STANDARD.encode(key.sign(&digest).to_bytes())
 }
 

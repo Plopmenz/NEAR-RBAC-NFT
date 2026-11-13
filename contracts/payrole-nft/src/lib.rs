@@ -13,7 +13,7 @@ use near_sdk::{
     env, ext_contract, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise,
     PromiseOrValue,
 };
-use rbac_common::{base_metadata_id, parse_token_id, role_id, token_id, validate_role_name};
+use payrole_common::{base_metadata_id, parse_token_id, role_id, token_id, validate_role_name};
 
 use crate::metadata::{
     MTBaseTokenMetadata, MTContractMetadata, MTRoleToken, MTTokenMetadata, MTTokenMetadataAll,
@@ -767,7 +767,7 @@ impl Contract {
     pub fn mt_metadata_contract(&self) -> MTContractMetadata {
         MTContractMetadata {
             spec: "mt-1.0.0".to_owned(),
-            name: "NEAR RBAC Role NFTs".to_owned(),
+            name: "PayRole Membership NFTs".to_owned(),
         }
     }
 

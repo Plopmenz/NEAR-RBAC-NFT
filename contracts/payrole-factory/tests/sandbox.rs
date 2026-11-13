@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! ./scripts/build-contract.sh
-//! cargo test -p rbac-factory --features sandbox --test sandbox
+//! cargo test -p payrole-factory --features sandbox --test sandbox
 //! ```
 //!
 //! The unit tests cover the registry bookkeeping with the mocked blockchain; these tests verify
@@ -36,7 +36,7 @@ fn wasm(name: &str) -> Vec<u8> {
 }
 
 async fn deploy_factory(worker: &Worker<Sandbox>, child_code: Vec<u8>) -> Result<Contract> {
-    let factory = worker.dev_deploy(&wasm("rbac_factory.wasm")).await?;
+    let factory = worker.dev_deploy(&wasm("payrole_factory.wasm")).await?;
     let storage = NearToken::from_yoctonear(child_code.len() as u128 * STORAGE_BYTE_COST);
     factory
         .call("new")
@@ -68,7 +68,7 @@ async fn required_deploy_deposit(factory: &Contract) -> Result<NearToken> {
 async fn deploy_registers_the_child_and_tracks_owner_changes() -> Result<()> {
     let worker = near_workspaces::sandbox().await?;
     let ft = deploy_mock_ft(&worker).await?;
-    let factory = deploy_factory(&worker, wasm("rbac_nft.wasm")).await?;
+    let factory = deploy_factory(&worker, wasm("payrole_nft.wasm")).await?;
     let deployer = worker.dev_create_account().await?;
     let owner = worker.dev_create_account().await?;
     let new_owner = worker.dev_create_account().await?;
@@ -155,7 +155,7 @@ async fn deploy_registers_the_child_and_tracks_owner_changes() -> Result<()> {
 #[tokio::test]
 async fn failed_child_initialization_is_not_registered_and_refunds_the_reserve() -> Result<()> {
     let worker = near_workspaces::sandbox().await?;
-    // The mock FT's `new(seed)` does not accept the RBAC init arguments, so the child init fails.
+    // The mock FT's `new(seed)` does not accept the PayRole init arguments, so the child init fails.
     let factory = deploy_factory(&worker, wasm("mock_ft.wasm")).await?;
     let deployer = worker.dev_create_account().await?;
 

@@ -22,7 +22,7 @@ pub enum RoleSourceError {
 /// Provides role membership and access-key information for a NEAR account.
 #[async_trait]
 pub trait RoleSource: Send + Sync {
-    /// Returns the roles currently held by `account_id`, as reported by the RBAC contract.
+    /// Returns the roles currently held by `account_id`, as reported by the PayRole contract.
     async fn roles_of(&self, account_id: &str) -> Result<Vec<String>, RoleSourceError>;
 
     /// Returns true when `public_key` is an access key of `account_id`.
@@ -70,7 +70,7 @@ impl NearRpcRoleSource {
     async fn query(&self, params: Value) -> Result<Value, RoleSourceError> {
         let body = json!({
             "jsonrpc": "2.0",
-            "id": "rbac-oidc",
+            "id": "payrole-oidc",
             "method": "query",
             "params": params,
         });

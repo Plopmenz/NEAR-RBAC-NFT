@@ -1,6 +1,6 @@
-# RBAC Factory
+# PayRole Factory
 
-A NEAR factory contract that deploys [`rbac-nft`](../rbac-nft) contracts as subaccounts and
+A NEAR factory contract that deploys [`payrole-nft`](../payrole-nft) contracts as subaccounts and
 keeps an on-chain registry for discovery.
 
 ## Why a factory?
@@ -8,7 +8,7 @@ keeps an on-chain registry for discovery.
 Deploying a contract normally requires a funded account, a wasm file, and a CLI. The factory
 turns that into one wallet transaction:
 
-1. The factory is initialized once with the rbac-nft wasm in `new(code)`; the code is immutable.
+1. The factory is initialized once with the payrole-nft wasm in `new(code)`; the code is immutable.
 2. A user calls `deploy` with a subaccount label, the desired contract owner, salary token, and
    payout interval, attaching the required deposit and gas.
 3. The factory creates `{name}.{factory}`, deploys the wasm, funds the account, and calls the
@@ -19,7 +19,7 @@ turns that into one wallet transaction:
 
 The web frontend uses the registry to find contracts without a separate indexer, then reads the
 current owner and roles directly from each child contract. The documented default testnet
-factory is `rbac-factory.testnet`.
+factory is `payrole-factory.testnet`.
 
 ## Trust model
 
@@ -56,7 +56,7 @@ There is no `set_owner`, `set_code`, or `withdraw`.
 
 ```json
 {
-  "account_id": "acme.rbac-factory.testnet",
+  "account_id": "acme.payrole-factory.testnet",
   "name": "acme",
   "owner_id": "dao.testnet",
   "salary_token": "usdc.testnet",
@@ -93,21 +93,21 @@ step and refuses to reuse an existing account:
 MASTER_ACCOUNT=dao.testnet ./scripts/deploy-factory.sh
 
 # Or manually with legacy near-cli:
-near deploy rbac-factory.testnet res/rbac_factory.wasm \
+near deploy payrole-factory.testnet res/payrole_factory.wasm \
   --initFunction new \
-  --initArgs "{\"code\":\"$(base64 -w0 res/rbac_nft.wasm)\"}" \
+  --initArgs "{\"code\":\"$(base64 -w0 res/payrole_nft.wasm)\"}" \
   --initDeposit 5
 ```
 
-On macOS use `base64 -i res/rbac_nft.wasm` instead of `base64 -w0`. The init deposit must cover
+On macOS use `base64 -i res/payrole_nft.wasm` instead of `base64 -w0`. The init deposit must cover
 the stored wasm (~4.1 NEAR for 399 KiB); the script defaults to 5 NEAR. Any remainder is locked
 permanently because the factory has no withdrawal method.
 
 Check the deposit required per child and the pinned hash:
 
 ```bash
-near view rbac-factory.testnet required_deploy_deposit
-near view rbac-factory.testnet code_hash
+near view payrole-factory.testnet required_deploy_deposit
+near view payrole-factory.testnet code_hash
 ```
 
 The value grows with the wasm size and the network storage price. For the current artifact it is
@@ -116,7 +116,7 @@ roughly **4.1 NEAR** per child, because every child stores its own copy of the w
 Deploy a child:
 
 ```bash
-near call rbac-factory.testnet deploy \
+near call payrole-factory.testnet deploy \
   '{
     "name":"acme",
     "owner_id":"dao.testnet",
@@ -133,7 +133,7 @@ near call rbac-factory.testnet deploy \
 Deployments emit a NEP-297 custom event:
 
 ```text
-EVENT_JSON:{"standard":"rbac-factory","version":"1.0.0","event":"deploy","data":[{...ContractRecord...}]}
+EVENT_JSON:{"standard":"payrole-factory","version":"1.0.0","event":"deploy","data":[{...ContractRecord...}]}
 ```
 
 Failed initializations emit `deploy_failed` with the target account and a reason. Failed

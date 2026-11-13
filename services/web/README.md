@@ -1,7 +1,7 @@
-# RBAC NFT Web
+# PayRole Web
 
-An Astro + TypeScript frontend for deploying and managing [`rbac-nft`](../../contracts/rbac-nft)
-contracts through the [`rbac-factory`](../../contracts/rbac-factory).
+An Astro + TypeScript frontend for deploying and managing [`payrole-nft`](../../contracts/payrole-nft)
+contracts through the [`payrole-factory`](../../contracts/payrole-factory).
 
 The app is fully static. It reads NEAR JSON-RPC directly and signs writes with
 [`@near-wallet-selector`](https://github.com/near/wallet-selector); there is no backend or
@@ -9,7 +9,7 @@ indexer.
 
 ## What it does
 
-- **Deploy** a new `rbac-nft` at `{name}.{factory}` in one wallet transaction. The owner can be
+- **Deploy** a new `payrole-nft` at `{name}.{factory}` in one wallet transaction. The owner can be
   any account, including a DAO or Trezu. If `PUBLIC_EXPECTED_CHILD_CODE_HASH` is set, deployment
   is blocked unless the immutable factory reports exactly that child wasm hash.
 - **Owned contracts** scans the factory registry, verifies each child's live `owner_id()`, and
@@ -31,7 +31,7 @@ always calls `owner_id()` / `roles_of()` on the child contract before trusting i
 ## Prerequisites
 
 - Node.js **22.23.4+** (Astro 7 requirement) and npm 9.6.5+
-- A deployed [`rbac-factory`](../../contracts/rbac-factory) initialized once with the `rbac-nft`
+- A deployed [`payrole-factory`](../../contracts/payrole-factory) initialized once with the `payrole-nft`
   wasm in `new(code)`. The factory has no owner and the code cannot be replaced.
 
 ## Configuration
@@ -46,8 +46,8 @@ cp .env.example .env
 | --- | --- | --- |
 | `PUBLIC_NEAR_NETWORK` | no | `testnet` (default) or `mainnet`. |
 | `PUBLIC_NEAR_RPC_URL` | no | RPC endpoint for reads. Defaults to the public RPC for the network. |
-| `PUBLIC_FACTORY_CONTRACT_ID` | yes | Factory account, e.g. `rbac-factory.testnet`. Without it, deployment and discovery are disabled and a banner is shown. |
-| `PUBLIC_EXPECTED_CHILD_CODE_HASH` | no | SHA-256 of the reviewed `rbac-nft` wasm. When set, the app refuses to deploy if `code_hash()` differs. |
+| `PUBLIC_FACTORY_CONTRACT_ID` | yes | Factory account, e.g. `payrole-factory.testnet`. Without it, deployment and discovery are disabled and a banner is shown. |
+| `PUBLIC_EXPECTED_CHILD_CODE_HASH` | no | SHA-256 of the reviewed `payrole-nft` wasm. When set, the app refuses to deploy if `code_hash()` differs. |
 | `PUBLIC_EXPLORER_URL` | no | Explorer base URL. Defaults to NEARBlocks for the network. |
 | `PUBLIC_SITE_URL` | no | Absolute public URL used for the canonical link and Open Graph/Twitter image tags. When unset those tags are omitted. |
 
@@ -108,9 +108,9 @@ The page ships a key/role-badge mark, a hero flow diagram, and a social preview 
 | `src/scripts/app/events.ts` | DOM event wiring and per-form busy state. |
 | `src/lib/rpc.ts` | JSON-RPC view calls and final block timestamp. |
 | `src/lib/factory.ts` | Factory info and paginated registry reads. |
-| `src/lib/rbac.ts` | Contract snapshots, membership discovery, permission helpers. |
+| `src/lib/payrole.ts` | Contract snapshots, membership discovery, permission helpers. |
 | `src/lib/wallet.ts` | Wallet selector setup and signed function calls. |
-| `src/lib/roles.ts` | Role id and token id derivation (must match `rbac-common`). |
+| `src/lib/roles.ts` | Role id and token id derivation (must match `payrole-common`). |
 | `src/lib/favorites.ts` | Network/account-scoped `localStorage` favorites. |
 | `src/lib/format.ts` | Token amounts, durations, progress, parsing. |
 | `src/lib/accounts.ts` | Account and subaccount validation. |

@@ -1,7 +1,7 @@
 //! Tests for the NEP-245 core, enumeration and metadata surfaces.
 
 use near_sdk::json_types::{U128, U64};
-use rbac_common::{base_metadata_id, role_id, token_id};
+use payrole_common::{base_metadata_id, role_id, token_id};
 
 use super::helpers::*;
 
@@ -151,7 +151,7 @@ fn contract_metadata() {
     let contract = new_contract();
     let metadata = contract.mt_metadata_contract();
     assert_eq!(metadata.spec, "mt-1.0.0");
-    assert_eq!(metadata.name, "NEAR RBAC Role NFTs");
+    assert_eq!(metadata.name, "PayRole Membership NFTs");
 }
 
 #[test]

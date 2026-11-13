@@ -22,7 +22,7 @@ const MIN_DEPLOY_PREPAID_GAS: Gas = Gas::from_tgas(150);
 const DEFAULT_PAGE_LIMIT: usize = 50;
 const MAX_PAGE_LIMIT: usize = 100;
 
-/// A registry entry for a deployed RBAC contract.
+/// A registry entry for a deployed PayRole contract.
 ///
 /// `owner_id` tracks the child's current owner: it is set at deployment and updated when a
 /// factory-deployed child calls [`Contract::on_owner_changed`] after `set_owner`. The update is
@@ -43,7 +43,7 @@ pub struct ContractRecord {
     pub deployed_at_ns: U64,
 }
 
-/// Factory that deploys RBAC role NFT contracts as subaccounts and keeps a registry of them.
+/// Factory that deploys PayRole NFT contracts as subaccounts and keeps a registry of them.
 ///
 /// The factory is deliberately immutable and keyless after initialization: it has no owner, no
 /// admin methods, and no way to replace the stored child wasm. The code is fixed at creation time
@@ -51,7 +51,7 @@ pub struct ContractRecord {
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Contract {
-    /// rbac-nft wasm stored once at initialization. Never modified.
+    /// payrole-nft wasm stored once at initialization. Never modified.
     code: Vec<u8>,
     /// child account -> record. Iterable for discovery.
     records: IterableMap<AccountId, ContractRecord>,
@@ -63,7 +63,7 @@ pub struct Contract {
 impl Contract {
     /// Creates the factory and stores the child wasm permanently.
     ///
-    /// `code` is a base64-encoded rbac-nft wasm file. The attached deposit must cover the storage
+    /// `code` is a base64-encoded payrole-nft wasm file. The attached deposit must cover the storage
     /// for the code; the factory keeps that stake for as long as the code is stored. There is no
     /// owner and no way to replace the code after this call.
     #[init]
@@ -115,7 +115,7 @@ impl Contract {
     // Deployment
     // ---------------------------------------------------------------------
 
-    /// Deploys a new rbac-nft contract at `{name}.{factory}` and initializes it.
+    /// Deploys a new payrole-nft contract at `{name}.{factory}` and initializes it.
     ///
     /// `owner_id` becomes the child contract's owner. The attached deposit must be at least
     /// [`Contract::required_deploy_deposit`]; excess is forwarded to the child. The caller must

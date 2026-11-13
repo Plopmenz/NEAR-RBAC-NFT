@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Deploys the immutable rbac-factory and stores the rbac-nft child wasm in one init call.
+# Deploys the immutable payrole-factory and stores the payrole-nft child wasm in one init call.
 #
 # Usage:
 #   MASTER_ACCOUNT=dao.testnet ./scripts/deploy-factory.sh
-#   MASTER_ACCOUNT=dao.testnet FACTORY_ACCOUNT=rbac-factory.testnet ./scripts/deploy-factory.sh
+#   MASTER_ACCOUNT=dao.testnet FACTORY_ACCOUNT=payrole-factory.testnet ./scripts/deploy-factory.sh
 #
 # The factory has no owner and no way to replace the child code after this call. If the account
 # already exists this script stops instead of risking a mixed or unexpected deployment. The init
@@ -14,10 +14,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NETWORK="${NEAR_NETWORK:-testnet}"
-FACTORY_ACCOUNT="${FACTORY_ACCOUNT:-rbac-factory.$NETWORK}"
+FACTORY_ACCOUNT="${FACTORY_ACCOUNT:-payrole-factory.$NETWORK}"
 MASTER_ACCOUNT="${MASTER_ACCOUNT:-}"
-CHILD_WASM="${CHILD_WASM:-res/rbac_nft.wasm}"
-FACTORY_WASM="${FACTORY_WASM:-res/rbac_factory.wasm}"
+CHILD_WASM="${CHILD_WASM:-res/payrole_nft.wasm}"
+FACTORY_WASM="${FACTORY_WASM:-res/payrole_factory.wasm}"
 INIT_BALANCE="${INIT_BALANCE:-1}"
 INIT_DEPOSIT="${INIT_DEPOSIT:-5}"
 

@@ -1,4 +1,4 @@
-//! Stable role identifiers shared by the on-chain RBAC contract and off-chain services.
+//! Stable role identifiers shared by the on-chain PayRole contract and off-chain services.
 //!
 //! NEP-245 identifies tokens with a string `token_id` and groups them with a base-metadata
 //! identifier. This project uses one token type per role: the decimal representation of the

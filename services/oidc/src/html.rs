@@ -170,13 +170,13 @@ pub fn index_page(config: &Config) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NEAR RBAC OIDC provider</title>
+<title>PayRole OIDC provider</title>
 <style>{STYLE}</style>
 </head>
 <body>
-<h1>NEAR RBAC OIDC provider</h1>
+<h1>PayRole OIDC provider</h1>
 <p>Issuer: <code>{issuer}</code></p>
-<p>RBAC contract: <code>{contract}</code></p>
+<p>PayRole contract: <code>{contract}</code></p>
 <h2>Registered clients</h2>
 <ul>{clients}</ul>
 <p><a href="/.well-known/openid-configuration">OpenID Connect discovery document</a></p>

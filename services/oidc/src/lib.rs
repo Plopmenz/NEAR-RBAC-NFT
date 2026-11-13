@@ -1,5 +1,5 @@
 //! OIDC provider that authenticates NEAR accounts with NEP-413 and authorizes them using the
-//! role NFTs held in the `rbac-nft` contract.
+//! role NFTs held in the `payrole-nft` contract.
 //!
 //! The crate is split into small modules so that the protocol logic can be tested without a
 //! network:
@@ -7,7 +7,7 @@
 //! - [`config`] parses the TOML configuration.
 //! - [`keys`] owns the RSA signing key and JWKS.
 //! - [`nep413`] builds and verifies NEP-413 messages.
-//! - [`roles`] queries the RBAC contract over NEAR JSON-RPC.
+//! - [`roles`] queries the PayRole contract over NEAR JSON-RPC.
 //! - [`store`] holds pending logins, codes and sessions in memory.
 //! - [`handlers`] implements the HTTP endpoints.
 //!

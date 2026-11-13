@@ -6,7 +6,7 @@
 //!
 //! ```text
 //! ./scripts/build-contract.sh
-//! cargo test -p rbac-nft --features sandbox --test sandbox
+//! cargo test -p payrole-nft --features sandbox --test sandbox
 //! ```
 //!
 //! The unit tests cover the same branches with the mocked blockchain; these tests verify that the
@@ -75,7 +75,7 @@ async fn claim_and_burn_pay_salary_through_the_mock_token() -> Result<()> {
     let owner = worker.dev_create_account().await?;
     let alice = worker.dev_create_account().await?;
 
-    let contract = worker.dev_deploy(&wasm("rbac_nft.wasm")).await?;
+    let contract = worker.dev_deploy(&wasm("payrole_nft.wasm")).await?;
     contract
         .call("new")
         .args_json(json!({
@@ -160,7 +160,7 @@ async fn failed_burn_payout_keeps_membership_and_restores_claim_time() -> Result
     let owner = worker.dev_create_account().await?;
     let alice = worker.dev_create_account().await?;
 
-    let contract = worker.dev_deploy(&wasm("rbac_nft.wasm")).await?;
+    let contract = worker.dev_deploy(&wasm("payrole_nft.wasm")).await?;
     contract
         .call("new")
         .args_json(json!({
@@ -267,7 +267,7 @@ async fn owner_can_withdraw_an_arbitrary_token_and_read_liabilities() -> Result<
     let owner = worker.dev_create_account().await?;
     let alice = worker.dev_create_account().await?;
 
-    let contract = worker.dev_deploy(&wasm("rbac_nft.wasm")).await?;
+    let contract = worker.dev_deploy(&wasm("payrole_nft.wasm")).await?;
     contract
         .call("new")
         .args_json(json!({

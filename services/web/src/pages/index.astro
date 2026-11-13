@@ -5,7 +5,7 @@ import { DEFAULT_PAYOUT_INTERVAL_NS } from "../lib/config";
 
 const siteUrl = (import.meta.env.PUBLIC_SITE_URL ?? "").trim().replace(/\/+$/, "");
 const description =
-  "Deploy and manage non-transferable RBAC role NFTs with on-chain salary streaming on NEAR.";
+  "PayRole: on-chain roles and payroll for NEAR DAOs. Deploy non-transferable role NFTs with NEP-141 salary streaming in one transaction.";
 const socialImage = siteUrl ? `${siteUrl}/og.png` : "";
 const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).toString();
 ---
@@ -17,12 +17,12 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>NEAR RBAC NFT</title>
+    <title>PayRole — on-chain roles and payroll for NEAR DAOs</title>
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="NEAR RBAC NFT" />
+    <meta property="og:title" content="PayRole — on-chain roles and payroll for NEAR DAOs" />
     <meta property="og:description" content={description} />
     <meta name="twitter:card" content={siteUrl ? "summary_large_image" : "summary"} />
-    <meta name="twitter:title" content="NEAR RBAC NFT" />
+    <meta name="twitter:title" content="PayRole — on-chain roles and payroll for NEAR DAOs" />
     <meta name="twitter:description" content={description} />
     {
       siteUrl && (
@@ -30,7 +30,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
           <link rel="canonical" href={siteUrl} />
           <meta property="og:url" content={siteUrl} />
           <meta property="og:image" content={socialImage} />
-          <meta property="og:image:alt" content="NEAR RBAC NFT key badge" />
+          <meta property="og:image:alt" content="PayRole key badge" />
           <meta name="twitter:image" content={socialImage} />
         </>
       )
@@ -57,7 +57,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
               stroke-linecap="round"></path>
           </svg>
         </span>
-        <span>RBAC<span class="brand-accent">NFT</span></span>
+        <span>Pay<span class="brand-accent">Role</span></span>
       </a>
       <div class="topbar-right">
         <span class="network-badge" id="network-badge">testnet</span>
@@ -73,11 +73,11 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
       <section class="hero">
         <div class="hero-copy">
           <p class="eyebrow">Roles as non-transferable NFTs</p>
-          <h1>Payroll and access control for NEAR DAOs.</h1>
+          <h1>On-chain roles and payroll for NEAR DAOs.</h1>
           <p class="lede">
-            Deploy an RBAC contract in one transaction, grant roles as NEP-245 NFTs, and let
-            members claim NEP-141 salary per role. No indexer: discovery is read directly from the
-            factory registry and each contract.
+            Deploy a PayRole contract in one transaction, grant roles as non-transferable NEP-245
+            NFTs, and let members claim NEP-141 salary per role. No indexer: discovery is read
+            directly from the factory registry and each contract.
           </p>
         </div>
         <div class="hero-art">
@@ -117,7 +117,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
             </g>
             <g class="flow-node accent">
               <rect x="30" y="104" width="360" height="64" rx="14"></rect>
-              <text x="52" y="132" class="flow-title">RBAC role NFT contract</text>
+              <text x="52" y="132" class="flow-title">Role NFT + payroll contract</text>
               <text x="52" y="151" class="flow-sub">per-role owner · salary per interval</text>
             </g>
             <g class="flow-node">
@@ -152,7 +152,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
       <section class="panel" data-panel="deploy" role="tabpanel">
         <div class="panel-heading">
           <div>
-            <h2>Deploy an RBAC contract</h2>
+            <h2>Deploy a PayRole contract</h2>
             <p class="muted">
               The factory creates <code>{"{name}.{factory}"}</code>, deploys the wasm, and initializes
               the contract with the owner you choose. The owner can be a DAO, Trezu, or any NEAR
@@ -263,7 +263,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
             </ul>
             <h3>Deployment cost</h3>
             <p class="muted">
-              Each child stores its own copy of the rbac-nft wasm. The required deposit is roughly
+              Each child stores its own copy of the payrole-nft wasm. The required deposit is roughly
               4.1 NEAR depending on the wasm size and network storage price. The factory forwards
               the deposit to the child; it is not a fee.
             </p>
@@ -336,7 +336,7 @@ const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).t
     </main>
 
     <footer class="footer">
-      <span>NEAR RBAC NFT · hackathon project, not audited</span>
+      <span>PayRole · hackathon project, not audited</span>
       <span>
         <a href="https://github.com/Plopmenz/NEAR-RBAC-NFT" rel="noreferrer">Source</a>
       </span>

@@ -1,4 +1,4 @@
-//! NEP-297 event helpers for the RBAC role NFTs.
+//! NEP-297 event helpers for PayRole NFTs.
 //!
 //! The contract emits standard `nep245` `mt_mint` and `mt_burn` events. Token ids are the decimal
 //! 64-bit role ids and every event moves an amount of `1`. Role configuration and salary changes

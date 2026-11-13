@@ -91,7 +91,7 @@ pub struct Config {
     pub listen: String,
     /// NEAR JSON-RPC endpoint used to query role memberships.
     pub rpc_url: String,
-    /// Account id of the RBAC contract.
+    /// Account id of the PayRole contract.
     pub contract_id: String,
     /// Registered clients.
     pub clients: Vec<ClientConfig>,
@@ -264,7 +264,7 @@ mod tests {
             issuer: "https://auth.example.com".to_owned(),
             listen: "127.0.0.1:8080".to_owned(),
             rpc_url: "https://rpc.testnet.near.org".to_owned(),
-            contract_id: "rbac.testnet".to_owned(),
+            contract_id: "payrole.testnet".to_owned(),
             clients: vec![ClientConfig {
                 client_id: "app".to_owned(),
                 name: None,

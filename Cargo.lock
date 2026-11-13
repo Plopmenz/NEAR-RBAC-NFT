@@ -2686,6 +2686,73 @@ dependencies = [
 ]
 
 [[package]]
+name = "payrole-common"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "payrole-factory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "near-parameters",
+ "near-sdk",
+ "near-workspaces",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "payrole-nft"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borsh",
+ "near-parameters",
+ "near-sdk",
+ "near-workspaces",
+ "payrole-common",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "payrole-oidc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "borsh",
+ "bs58 0.5.1",
+ "ed25519-dalek",
+ "hex",
+ "http-body-util",
+ "jsonwebtoken",
+ "near-account-id",
+ "payrole-common",
+ "rand 0.8.8",
+ "reqwest 0.12.28",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "pem"
 version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2984,73 +3051,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a"
 dependencies = [
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "rbac-common"
-version = "0.1.0"
-dependencies = [
- "sha2 0.10.9",
-]
-
-[[package]]
-name = "rbac-factory"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "near-parameters",
- "near-sdk",
- "near-workspaces",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "rbac-nft"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "borsh",
- "near-parameters",
- "near-sdk",
- "near-workspaces",
- "rbac-common",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "rbac-oidc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "base64 0.22.1",
- "borsh",
- "bs58 0.5.1",
- "ed25519-dalek",
- "hex",
- "http-body-util",
- "jsonwebtoken",
- "near-account-id",
- "rand 0.8.8",
- "rbac-common",
- "reqwest 0.12.28",
- "rsa",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "subtle",
- "thiserror 2.0.21",
- "tokio",
- "toml",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]

@@ -50,8 +50,8 @@ jobs:
         with:
           name: contracts-wasm
           path: |
-            res/rbac_nft.wasm
-            res/rbac_factory.wasm
+            res/payrole_nft.wasm
+            res/payrole_factory.wasm
           if-no-files-found: error
 
   sandbox:
@@ -70,7 +70,7 @@ jobs:
         run: ./scripts/build-contract.sh
 
       - name: Sandbox tests
-        run: cargo test -p rbac-nft -p rbac-factory --features sandbox --test sandbox
+        run: cargo test -p payrole-nft -p payrole-factory --features sandbox --test sandbox
 
   web:
     name: Web test, check, build

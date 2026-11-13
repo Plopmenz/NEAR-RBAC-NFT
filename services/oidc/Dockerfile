@@ -1,10 +1,10 @@
 # Build from the repository root so the workspace and Cargo.lock are available:
 #
-#   docker build -f services/oidc/Dockerfile -t rbac-oidc .
+#   docker build -f services/oidc/Dockerfile -t payrole-oidc .
 #   docker run --rm -p 8080:8080 \
 #     -v "$PWD/services/oidc/config.toml:/app/config.toml:ro" \
 #     -v "$PWD/services/oidc/signing-key.pem:/app/signing-key.pem:ro" \
-#     rbac-oidc
+#     payrole-oidc
 
 FROM rust:1.95-slim-bookworm AS builder
 WORKDIR /app
@@ -18,20 +18,20 @@ COPY crates ./crates
 COPY contracts ./contracts
 COPY services ./services
 
-RUN cargo build -p rbac-oidc --release
+RUN cargo build -p payrole-oidc --release
 
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --create-home rbac
+    && useradd --system --uid 10001 --create-home payrole
 
 WORKDIR /app
-COPY --from=builder /app/target/release/rbac-oidc /usr/local/bin/rbac-oidc
+COPY --from=builder /app/target/release/payrole-oidc /usr/local/bin/payrole-oidc
 
-USER rbac
+USER payrole
 EXPOSE 8080
 
-ENTRYPOINT ["rbac-oidc"]
+ENTRYPOINT ["payrole-oidc"]
 CMD ["/app/config.toml"]

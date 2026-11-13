@@ -1,6 +1,6 @@
 //! NEP-297 events emitted by the factory.
 //!
-//! Events use the custom `rbac-factory` standard. The payload is a full
+//! Events use the custom `payrole-factory` standard. The payload is a full
 //! [`ContractRecord`](crate::ContractRecord), so indexers can follow deployments without reading
 //! contract state.
 
@@ -9,7 +9,7 @@ use near_sdk::{env, serde_json};
 
 use crate::ContractRecord;
 
-const STANDARD: &str = "rbac-factory";
+const STANDARD: &str = "payrole-factory";
 const VERSION: &str = "1.0.0";
 
 #[derive(Serialize)]

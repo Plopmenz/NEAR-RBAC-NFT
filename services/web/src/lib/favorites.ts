@@ -3,7 +3,7 @@ export interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
-const PREFIX = "rbac-nft:favorites:v1";
+const PREFIX = "payrole-nft:favorites:v1";
 
 export function favoritesKey(network: string, accountId: string): string {
   return `${PREFIX}:${network}:${accountId}`;

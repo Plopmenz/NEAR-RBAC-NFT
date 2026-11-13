@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the RBAC contract and factory for NEAR and copies the artifacts to res/.
+# Builds the PayRole contract and factory for NEAR and copies the artifacts to res/.
 #
 # The mock NEP-141 token in test-contracts/mock-ft is built too so the sandbox tests can use it.
 # It is not a production artifact.
@@ -10,18 +10,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-cargo build -p rbac-nft -p rbac-factory -p mock-ft --target wasm32-unknown-unknown --release
+cargo build -p payrole-nft -p payrole-factory -p mock-ft --target wasm32-unknown-unknown --release
 
 mkdir -p res
-cp target/wasm32-unknown-unknown/release/rbac_nft.wasm res/rbac_nft.wasm
-cp target/wasm32-unknown-unknown/release/rbac_factory.wasm res/rbac_factory.wasm
+cp target/wasm32-unknown-unknown/release/payrole_nft.wasm res/payrole_nft.wasm
+cp target/wasm32-unknown-unknown/release/payrole_factory.wasm res/payrole_factory.wasm
 cp target/wasm32-unknown-unknown/release/mock_ft.wasm res/mock_ft.wasm
 
 if command -v wasm-opt >/dev/null 2>&1; then
   wasm-opt -Oz --strip-debug --strip-producers \
-    res/rbac_nft.wasm -o res/rbac_nft.wasm
+    res/payrole_nft.wasm -o res/payrole_nft.wasm
   wasm-opt -Oz --strip-debug --strip-producers \
-    res/rbac_factory.wasm -o res/rbac_factory.wasm
+    res/payrole_factory.wasm -o res/payrole_factory.wasm
   # The mock token does not need to be small, but optimizing keeps parity with the other builds.
   wasm-opt -Oz --strip-debug --strip-producers \
     res/mock_ft.wasm -o res/mock_ft.wasm
@@ -30,4 +30,4 @@ else
   echo "wasm-opt not found; using the Rust release profile only"
 fi
 
-echo "Built res/rbac_nft.wasm, res/rbac_factory.wasm and res/mock_ft.wasm"
+echo "Built res/payrole_nft.wasm, res/payrole_factory.wasm and res/mock_ft.wasm"

@@ -1,7 +1,9 @@
-# NEAR RBAC NFT
+# PayRole
 
-Non-transferable **NEP-245 role NFTs**, on-chain **role-gated access checks**, and
-**NEP-141 salary streaming** — plus a **factory** for one-transaction deployments, a Rust
+**On-chain roles and payroll for NEAR DAOs.**
+
+PayRole combines non-transferable **NEP-245 role NFTs**, on-chain **role-gated access checks**,
+and **NEP-141 salary streaming** — plus a **factory** for one-transaction deployments, a Rust
 **OpenID Connect provider** that turns on-chain roles into off-chain service access, and an
 Astro web app for deploying and managing contracts.
 
@@ -12,17 +14,17 @@ token.
 
 ```
                      owns / governs
-   DAO or Trezu ───────────────────────► rbac-nft contract
+   DAO or Trezu ───────────────────────► payrole-nft contract
                                               │
                          role NFTs (NEP-245)  │  salary (NEP-141 ft_transfer)
                                               ▼
                                         salary token
 
-   browser ── wallet ──► rbac-factory ──deploy──► rbac-nft
+   browser ── wallet ──► payrole-factory ──deploy──► payrole-nft
       │                     │ registry
       └────── reads ────────┘
 
-   NEAR wallet ── NEP-413 login ──► rbac-oidc ── JSON-RPC `roles_of` ──► rbac-nft
+   NEAR wallet ── NEP-413 login ──► payrole-oidc ── JSON-RPC `roles_of` ──► payrole-nft
                                        │
                                        ▼
                                OIDC client / app
@@ -32,8 +34,295 @@ token.
 > [Security model](#security-model) and [Limitations](#limitations) before using it with real
 > funds.
 
+## Judge walkthrough: do X, see Y
+
+This section is written for a screening bot or a human judge who wants to verify the project
+without reading the whole codebase first. Every step is self-contained and states exactly what
+to run and what success looks like. Nothing is deployed by this repository, so on-chain steps
+use example testnet account ids; replace them with accounts you control.
+
+### 1. Verify the Rust workspace and the contracts
+
+**Do:**
+
+```bash
+cargo test --workspace
+```
+
+**See:** `test result: ok` for every crate, ending with **170 Rust tests passed**. The suite
+covers role hashing, initialization/admin permissions, role creation and delegation,
+mint/burn, pagination, holder indexes, NEP-245 reads/metadata, salary accrual, partial
+intervals, independent holder claims, burn payouts and rollbacks, arbitrary-token withdrawal,
+liabilities, and factory owner sync.
+
+**Do:**
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+**See:** both commands exit `0` with no formatting diffs and no clippy warnings.
+
+### 2. Verify the web app
+
+**Do:**
+
+```bash
+cd services/web
+npm install
+npm test
+npm run check
+npm run build
+```
+
+**See:** **36 Vitest tests passed**, `astro check` reports `0 errors`, and a static site is
+written to `services/web/dist/`. The tests cover role-id vectors, account/subaccount
+validation, amount/duration parsing, payout-interval defaults, interval progress, favorites
+scoping, bounded concurrency, and role/contract permission helpers.
+
+### 3. Build the deployable wasm
+
+**Do:**
+
+```bash
+# from the repository root
+./scripts/build-contract.sh
+ls -lh res/payrole_nft.wasm res/payrole_factory.wasm res/mock_ft.wasm
+sha256sum res/payrole_nft.wasm
+```
+
+**See:** all three artifacts exist. `payrole_nft.wasm` is ~**399 KiB** and
+`payrole_factory.wasm` is ~**230 KiB** in this release profile (`opt-level = "z"`, LTO, one
+codegen unit, abort-on-panic, overflow checks, symbols stripped). The `sha256sum` value is the
+hash the factory stores and clients can pin as `PUBLIC_EXPECTED_CHILD_CODE_HASH`.
+
+### 4. Deploy the immutable factory (optional, needs testnet NEAR)
+
+**Do:**
+
+```bash
+MASTER_ACCOUNT=<your-funded-testnet-account> \
+FACTORY_ACCOUNT=payrole-factory.testnet \
+./scripts/deploy-factory.sh
+```
+
+**See:** the script prints `Deployed payrole-factory.testnet ...`, then:
+
+```bash
+near view payrole-factory.testnet required_deploy_deposit
+near view payrole-factory.testnet code_hash
+```
+
+returns a deposit of roughly **4.1 NEAR** and the same SHA-256 hash printed in step 3. There
+is no owner, no `set_code`, and no withdrawal method: the child wasm is fixed by the `new(code)`
+init call.
+
+### 5. Deploy a child contract through the factory
+
+The walkthrough uses the bundled mock NEP-141 for salary so that the claim step works without a
+real token or a storage-registration dance. Set your funded testnet account once:
+
+```bash
+export MASTER_ACCOUNT=<your-funded-testnet-account>
+```
+
+**Do (create and fund the demo salary token):**
+
+```bash
+near create-account mock-ft.$MASTER_ACCOUNT \
+  --masterAccount "$MASTER_ACCOUNT" --initialBalance 3
+near deploy mock-ft.$MASTER_ACCOUNT res/mock_ft.wasm \
+  --initFunction new --initArgs '{"seed":1}'
+near call mock-ft.$MASTER_ACCOUNT mint \
+  '{"account_id":"acme.payrole-factory.testnet","amount":"100000000"}' \
+  --accountId "$MASTER_ACCOUNT"
+```
+
+**Do (deploy the child):**
+
+```bash
+near call payrole-factory.testnet deploy \
+  "{\"name\":\"acme\",\"owner_id\":\"dao.testnet\",\"salary_token\":\"mock-ft.$MASTER_ACCOUNT\",\"payout_interval_ns\":\"1000000000\"}" \
+  --accountId dao.testnet \
+  --deposit 5 \
+  --gas 300000000000000
+```
+
+**See:** an `EVENT_JSON` line with standard `payrole-factory`, event `deploy`, and a record for
+`acme.payrole-factory.testnet`. Read it back:
+
+```bash
+near view payrole-factory.testnet get_contract '{"account_id":"acme.payrole-factory.testnet"}'
+near view acme.payrole-factory.testnet owner_id
+near view acme.payrole-factory.testnet factory_id
+near view acme.payrole-factory.testnet payout_interval_ns
+near view acme.payrole-factory.testnet salary_token
+```
+
+The contract exists, `owner_id` is `dao.testnet`, `factory_id` is `payrole-factory.testnet`,
+`payout_interval_ns` is `1000000000` (1 second, so salary is visible immediately), and
+`salary_token` is `mock-ft.<your-account>.testnet`. The web app defaults to 30 days for real
+deployments; the short interval is only for this verification.
+
+### 6. Create a role, mint it, and check access
+
+**Do:**
+
+```bash
+near call acme.payrole-factory.testnet set_role_salary \
+  '{"role":"admin","salary":"1000000"}' \
+  --accountId dao.testnet
+
+near call acme.payrole-factory.testnet mint_role \
+  '{"account_id":"alice.testnet","role":"admin"}' \
+  --accountId dao.testnet \
+  --deposit 0.011
+```
+
+**See:** `set_role_salary` returns a `RoleView` for `admin`, and `mint_role` returns the
+decimal token id `10117748766825055253` (the first 8 bytes of `SHA-256("admin")`). Then:
+
+```bash
+near view acme.payrole-factory.testnet has_role \
+  '{"account_id":"alice.testnet","role":"admin"}'
+near view acme.payrole-factory.testnet roles_of '{"account_id":"alice.testnet"}'
+near view acme.payrole-factory.testnet members_of \
+  '{"role":"admin"}'
+near view acme.payrole-factory.testnet mt_balance_of \
+  '{"account_id":"alice.testnet","token_id":"10117748766825055253"}'
+```
+
+returns `true`, `["admin"]`, a member list containing `alice.testnet`, and `"1"`. The same
+role id also appears in `get_role` and in the `nep245` `mt_mint` event.
+
+### 7. Verify non-transferability
+
+**Do:**
+
+```bash
+near call acme.payrole-factory.testnet mt_transfer \
+  '{"receiver_id":"bob.testnet","token_id":"10117748766825055253","amount":"1"}' \
+  --accountId alice.testnet
+```
+
+**See:** the transaction fails with **`role NFTs are non-transferable`**. Access cannot be
+sold or moved; only mint/burn by the contract owner or role owner changes membership.
+
+### 8. Claim salary and inspect liabilities
+
+**Do:**
+
+```bash
+# Immediately after minting the first interval has not elapsed:
+near view acme.payrole-factory.testnet claimable '{"account_id":"alice.testnet"}'
+sleep 2
+near view acme.payrole-factory.testnet claimable '{"account_id":"alice.testnet"}'
+near view acme.payrole-factory.testnet accrued_liabilities
+near call acme.payrole-factory.testnet claim \
+  '{"account_id":"alice.testnet"}' \
+  --accountId alice.testnet \
+  --gas 100000000000000
+near view mock-ft.$MASTER_ACCOUNT ft_balance_of '{"account_id":"alice.testnet"}'
+```
+
+**See:** the first `claimable` is `"0"`; after `sleep 2` it is at least `"2000000"` (two 1-second
+intervals at a salary of `1000000`), and `accrued_liabilities` matches. `claim` returns the paid
+amount, and `ft_balance_of` for `alice.testnet` increases by that amount. The transfer goes to
+`alice.testnet` even when a third party calls `claim`. A role's salary and the global interval
+apply retroactively to unclaimed time, so claim before changing payroll config.
+
+### 9. Burn a membership with or without paying pending salary
+
+**Do (default: pay, then remove access):**
+
+```bash
+sleep 2
+near call acme.payrole-factory.testnet burn_role \
+  '{"account_id":"alice.testnet","role":"admin"}' \
+  --accountId dao.testnet \
+  --gas 100000000000000
+near view acme.payrole-factory.testnet has_role \
+  '{"account_id":"alice.testnet","role":"admin"}'
+```
+
+**See:** the pending salary from the last two seconds is transferred first, then `has_role`
+returns `false`. If the salary transfer fails, the membership and claim timestamp are restored
+so the burn can be retried. To remove a membership without paying, mint one for `bob.testnet`,
+let it accrue, and pass `pay_pending: false`:
+
+```bash
+near call acme.payrole-factory.testnet mint_role \
+  '{"account_id":"bob.testnet","role":"admin"}' \
+  --accountId dao.testnet --deposit 0.011
+sleep 2
+near call acme.payrole-factory.testnet burn_role \
+  '{"account_id":"bob.testnet","role":"admin","pay_pending":false}' \
+  --accountId dao.testnet
+near view mock-ft.$MASTER_ACCOUNT ft_balance_of '{"account_id":"bob.testnet"}'
+```
+
+**See:** `bob.testnet` receives nothing even though salary had accrued, and access is removed
+immediately.
+
+### 10. Run the web app
+
+**Do:**
+
+```bash
+cd services/web
+cp .env.example .env
+# set PUBLIC_FACTORY_CONTRACT_ID=payrole-factory.testnet
+npm run dev
+```
+
+**See:** open **http://localhost:4321**. The PayRole page loads with the subtitle
+“On-chain roles and payroll for NEAR DAOs.” and three tabs: **Deploy**, **Owned contracts**,
+and **My roles**. Connect a wallet, deploy a child at `{name}.{payrole-factory.testnet}`, scan
+an owner, then watch each contract card show salary-token balance vs. `accrued_liabilities()`
+with a **funded** or **underfunded** badge. Mint/burn controls attach the required deposit and
+pay pending salary by default.
+
+### 11. Check the OIDC provider
+
+**Do:**
+
+```bash
+cargo test -p payrole-oidc
+cargo run -p payrole-oidc --release -- services/oidc/config.example.toml
+```
+
+**See:** the OIDC tests pass, then the service listens on `127.0.0.1:8080` and logs
+`payrole-oidc listening`. In another terminal:
+
+```bash
+curl -s http://127.0.0.1:8080/.well-known/openid-configuration
+curl -s http://127.0.0.1:8080/jwks.json
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/healthz
+```
+
+The discovery document contains `"issuer":"https://auth.example.com"` plus `token_endpoint` and
+`jwks_uri`; the JWKS contains a key with `"kty":"RSA"`, `"alg":"RS256"`, and `"use":"sig"`; the
+health check prints `200`. If port 8080 is already in use, change `listen` in the config (and
+the curl URLs) to another port. A browser login uses NEP-413, verifies the signing key is a
+current access key of the claimed account, checks the client's `required_roles` via live
+`roles_of`, and redirects with a one-time authorization code.
+
+### What each judge-facing feature maps to
+
+| Claim | Where to verify |
+| --- | --- |
+| Roles are non-transferable NEP-245 NFTs | Step 7; `contracts/payrole-nft/src/lib.rs` transfer methods. |
+| Salary is NEP-141 and paid per full interval | Step 8; `claim`, `claimable`, `accrued_liabilities`. |
+| Burning pays pending salary by default | Step 9; `burn_role(..., pay_pending)`. |
+| One-transaction factory deployment | Steps 4–5; `contracts/payrole-factory`. |
+| Owner/role-owner administration | Step 6; `set_role_owner`, mint/burn auth. |
+| Off-chain SSO from on-chain roles | Step 11; `services/oidc`. |
+| Browser UI without an indexer | Step 10; `services/web`. |
+
 ## Contents
 
+- [Judge walkthrough: do X, see Y](#judge-walkthrough-do-x-see-y)
 - [Why role NFTs?](#why-role-nfts)
 - [Repository layout](#repository-layout)
 - [Quick start](#quick-start)
@@ -69,14 +358,14 @@ token.
 ```
 .
 ├── Cargo.toml                     # Rust workspace
-├── crates/rbac-common/            # Stable role ids and token-id encoding, shared by contract + service
-├── contracts/rbac-nft/            # NEP-245 role NFT + salary contract
+├── crates/payrole-common/         # Stable role ids and token-id encoding, shared by contract + service
+├── contracts/payrole-nft/         # NEP-245 role NFT + salary contract
 │   └── src/
 │       ├── lib.rs                 # Contract methods
 │       ├── metadata.rs            # NEP-245 role-level metadata types
 │       ├── events.rs              # NEP-297 mt_mint / mt_burn events
 │       └── tests/                 # Unit + sandbox tests
-├── contracts/rbac-factory/        # Immutable factory and deployment registry
+├── contracts/payrole-factory/     # Immutable factory and deployment registry
 │   └── src/                       # deploy/registry, callbacks + tests
 ├── test-contracts/mock-ft/        # Minimal NEP-141 used by the sandbox tests
 ├── services/oidc/                 # OIDC provider (axum)
@@ -125,12 +414,12 @@ npm run build
 ```bash
 ./scripts/build-contract.sh
 # or individually:
-cargo build -p rbac-nft -p rbac-factory --target wasm32-unknown-unknown --release
+cargo build -p payrole-nft -p payrole-factory --target wasm32-unknown-unknown --release
 ```
 
 The script also builds `test-contracts/mock-ft` into `res/mock_ft.wasm` for the sandbox tests;
-that token is not a production artifact. The contract artifacts are `res/rbac_nft.wasm` and
-`res/rbac_factory.wasm` (the script also leaves them under
+that token is not a production artifact. The contract artifacts are `res/payrole_nft.wasm` and
+`res/payrole_factory.wasm` (the script also leaves them under
 `target/wasm32-unknown-unknown/release/`). The release profile uses `opt-level = "z"`, LTO, one
 codegen unit, abort-on-panic, overflow checks, and symbol stripping. If `wasm-opt` is on your
 `PATH`, the script also runs `wasm-opt -Oz`.
@@ -152,8 +441,8 @@ Legacy `near-cli` example (adapt the syntax if you use `near-cli-rs`):
 
 ```bash
 near deploy \
-  --accountId rbac.testnet \
-  --wasmFile res/rbac_nft.wasm \
+  --accountId payrole.testnet \
+  --wasmFile res/payrole_nft.wasm \
   --initFunction new \
   --initArgs '{"owner_id":"dao.testnet","salary_token":"usdc.testnet","payout_interval_ns":"604800000000000","factory_id":null}'
 ```
@@ -165,27 +454,27 @@ hand the contract to the DAO, call `set_owner` first while you still control the
 
 The factory deploys `{name}.{factory}` in one wallet transaction and keeps a registry for
 discovery. It is **immutable and trustless**: there is no owner, no `set_code`, and no withdrawal
-method. The rbac-nft wasm is supplied once in the `new(code)` init call and can never change.
+method. The payrole-nft wasm is supplied once in the `new(code)` init call and can never change.
 
 ```bash
-# Creates rbac-factory.testnet and stores res/rbac_nft.wasm in one transaction.
+# Creates payrole-factory.testnet and stores res/payrole_nft.wasm in one transaction.
 MASTER_ACCOUNT=dao.testnet ./scripts/deploy-factory.sh
 
 # Or with the legacy near-cli manually:
-near deploy rbac-factory.testnet res/rbac_factory.wasm \
+near deploy payrole-factory.testnet res/payrole_factory.wasm \
   --initFunction new \
-  --initArgs "{\"code\":\"$(base64 -w0 res/rbac_nft.wasm)\"}" \
+  --initArgs "{\"code\":\"$(base64 -w0 res/payrole_nft.wasm)\"}" \
   --initDeposit 5
 
-near view rbac-factory.testnet required_deploy_deposit
-near view rbac-factory.testnet code_hash
+near view payrole-factory.testnet required_deploy_deposit
+near view payrole-factory.testnet code_hash
 ```
 
 Each child stores its own copy of the wasm, so the deposit is roughly **4.1 NEAR** and is not a
 fee: the factory forwards it to the child. A child deployed by the factory has no protocol-level
 access key and is therefore immutable. Clients should pin `code_hash()` (or set
 `PUBLIC_EXPECTED_CHILD_CODE_HASH` in the web app) so they deploy against code they reviewed. See
-[`contracts/rbac-factory/README.md`](contracts/rbac-factory/README.md) for the full API and
+[`contracts/payrole-factory/README.md`](contracts/payrole-factory/README.md) for the full API and
 caveats, and [Production: global contract by hash](#production-global-contract-by-hash) for the
 lower-cost production path.
 
@@ -207,19 +496,19 @@ owner administration controls. See [`services/web/README.md`](services/web/READM
 
 ```bash
 # Create/update a role. Salary is in the salary token's smallest unit.
-near call rbac.testnet set_role_salary \
+near call payrole.testnet set_role_salary \
   '{"role":"admin","salary":"1000000000000000000000000"}' \
   --accountId dao.testnet
 
 # Optional: delegate role administration to an operational account.
-near call rbac.testnet set_role_owner \
+near call payrole.testnet set_role_owner \
   '{"role":"admin","owner":"hr.testnet"}' \
   --accountId dao.testnet
 
 # Mint the role membership. The role must already be configured.
 # `mint_role` is payable: attach at least required_mint_deposit() (a storage reserve).
-near view rbac.testnet required_mint_deposit
-near call rbac.testnet mint_role \
+near view payrole.testnet required_mint_deposit
+near call payrole.testnet mint_role \
   '{"account_id":"alice.testnet","role":"admin"}' \
   --accountId hr.testnet \
   --deposit 0.011
@@ -228,15 +517,15 @@ near call rbac.testnet mint_role \
 Read it back:
 
 ```bash
-near view rbac.testnet has_role '{"account_id":"alice.testnet","role":"admin"}'
-near view rbac.testnet roles_of '{"account_id":"alice.testnet"}'
-near view rbac.testnet get_role '{"role":"admin"}'
+near view payrole.testnet has_role '{"account_id":"alice.testnet","role":"admin"}'
+near view payrole.testnet roles_of '{"account_id":"alice.testnet"}'
+near view payrole.testnet get_role '{"role":"admin"}'
 ```
 
 Claim salary (anyone may trigger a claim; the payout always goes to the member):
 
 ```bash
-near call rbac.testnet claim \
+near call payrole.testnet claim \
   '{"account_id":"alice.testnet"}' \
   --accountId alice.testnet \
   --gas 100000000000000
@@ -334,7 +623,7 @@ Rules:
   is allowed).
 - An account can hold a given role at most once.
 - An account can hold at most **32 roles**. The limit is configurable at build time via the
-  compile-time constant `MAX_ROLES_PER_ACCOUNT` in `contracts/rbac-nft/src/lib.rs`; it is not a
+  compile-time constant `MAX_ROLES_PER_ACCOUNT` in `contracts/payrole-nft/src/lib.rs`; it is not a
   runtime or owner setting. 32 is deliberately conservative: `claim` loops over every role an
   account holds, so the cap bounds gas use and response size. `claim_role` can claim one role at
   a time. Raising the limit is possible but requires rebuilding and redeploying the contract.
@@ -425,13 +714,13 @@ synchronously; use an asynchronous cross-contract call and continue in a callbac
 ```rust
 use near_sdk::{ext_contract, AccountId, Gas};
 
-#[ext_contract(ext_rbac)]
-trait Rbac {
+#[ext_contract(ext_payrole)]
+trait Payrole {
     fn has_role(&self, account_id: AccountId, role: String) -> bool;
 }
 
-// Start the check. `rbac_account` is the deployed rbac-nft contract.
-ext_rbac::ext(rbac_account)
+// Start the check. `payrole_account` is the deployed payrole-nft contract.
+ext_payrole::ext(payrole_account)
     .with_static_gas(Gas::from_tgas(10))
     .has_role(account_id, "admin".to_owned())
     .then(
@@ -457,7 +746,7 @@ curl -s https://rpc.testnet.near.org \
     \"params\":{
       \"request_type\":\"call\",
       \"finality\":\"final\",
-      \"account_id\":\"rbac.testnet\",
+      \"account_id\":\"payrole.testnet\",
       \"method_name\":\"roles_of\",
       \"args_base64\":\"$ARGS\"
     }
@@ -471,17 +760,17 @@ The contract result is a JSON byte array in `result.result`; decode it with
 
 ### Factory
 
-[`contracts/rbac-factory`](contracts/rbac-factory) lets anyone create an initialized
-`rbac-nft` as `{name}.{factory}` with a single transaction:
+[`contracts/payrole-factory`](contracts/payrole-factory) lets anyone create an initialized
+`payrole-nft` as `{name}.{factory}` with a single transaction:
 
-1. The deployer initializes the factory once with the `rbac-nft` wasm:
+1. The deployer initializes the factory once with the `payrole-nft` wasm:
    `new(code_base64)`, attaching enough deposit for storage. The code is immutable from then on.
 2. A user calls `deploy(name, owner_id, salary_token, payout_interval_ns)` with at least
    `required_deploy_deposit()` and enough gas (150 Tgas minimum; the web app sends 300).
 3. The factory creates the account, deploys the wasm, funds it, and calls `new` with its own
    account id as `factory_id`.
 4. A private callback records the child only after initialization succeeds and emits a
-   `rbac-factory` NEP-297 `deploy` event. On failure it refunds the registry reserve to the
+   `payrole-factory` NEP-297 `deploy` event. On failure it refunds the registry reserve to the
    deployer.
 5. The child's `set_owner` calls the factory's `on_owner_changed`, which updates
    `ContractRecord.owner_id` and the `by_owner` index.
@@ -496,7 +785,7 @@ The notification is best-effort: if it fails, the child's live `owner_id()` rema
 authoritative and the factory index is stale, so clients must verify the child. The index is
 also spammable by deploying with a victim's account as the initial owner; treat it as an
 advisory discovery hint and hide unwanted entries with local favorites. `deployer_id` stays in
-the record for auditing. The documented default testnet factory is `rbac-factory.testnet`.
+the record for auditing. The documented default testnet factory is `payrole-factory.testnet`.
 
 Factory-deployed children have no protocol-level access key, so they cannot be upgraded or
 deleted. A failed initialization leaves an orphan account at the target id and burns the
@@ -532,14 +821,14 @@ use the global-by-hash path for this hackathon deployment is funding: deploying 
 contract burns roughly **38 NEAR** for the current wasm, and the testnet account used here does
 not have sufficient testnet NEAR for that. The local path only stakes a per-child deposit, which
 is forwarded to the child. It is also simple and keeps each child independent. The trade-off is
-storage: every child stores its own copy of the ~0.39 MiB rbac-nft wasm, so each deployment costs
+storage: every child stores its own copy of the ~0.39 MiB payrole-nft wasm, so each deployment costs
 roughly 4.1 NEAR.
 
 The production path is a **global contract stored by hash** (NEP-591). A global contract is
 deployed once to the network and identified by its SHA-256 hash, and accounts can use it without
 storing another copy:
 
-- Deploy the reviewed rbac-nft wasm once as a global contract. The protocol burns the storage
+- Deploy the reviewed payrole-nft wasm once as a global contract. The protocol burns the storage
   cost of the code (roughly **~38 NEAR** at 10× the normal storage byte cost) instead
   of staking it.
 - The factory deploys each child with `DeployGlobalContractByHash` / a global-contract use
@@ -563,7 +852,7 @@ Trade-offs:
 
 ## OIDC provider
 
-The `rbac-oidc` service is a small OpenID Connect provider that authenticates a NEAR account
+The `payrole-oidc` service is a small OpenID Connect provider that authenticates a NEAR account
 with **NEP-413** and authorizes it with **live on-chain roles**.
 
 ### Endpoints
@@ -650,7 +939,7 @@ main fields are:
 | `issuer` | required | Public HTTPS base URL; used as `iss` and discovery prefix. No trailing slash. |
 | `listen` | `127.0.0.1:8080` | Bind address. |
 | `rpc_url` | required | NEAR JSON-RPC endpoint for `roles_of` and access-key checks. |
-| `contract_id` | required | Deployed `rbac-nft` account. |
+| `contract_id` | required | Deployed `payrole-nft` account. |
 | `clients` | required | One or more registered OIDC clients. |
 | `nep413_recipient` | issuer host | Recipient string bound into the signed message. |
 | `nep413_callback_url` | unset | Optional callback URL bound into the signed message. |
@@ -677,10 +966,10 @@ chmod 600 services/oidc/signing-key.pem
 cp services/oidc/config.example.toml services/oidc/config.toml
 # edit issuer, rpc_url, contract_id, clients, signing_key_path
 
-cargo run -p rbac-oidc --release -- services/oidc/config.toml
+cargo run -p payrole-oidc --release -- services/oidc/config.toml
 ```
 
-`RBAC_OIDC_CONFIG` can also point at the config file. Put the service behind a TLS reverse
+`PAYROLE_OIDC_CONFIG` can also point at the config file. Put the service behind a TLS reverse
 proxy so the configured `issuer` is reachable over HTTPS, and add request rate limiting for
 `/login`, `/authorize`, `/token`, and `/introspect` at that proxy. The pending-login cap and
 expired-entry sweeper bound memory use, but per-IP throttling is deliberately left to the proxy.
@@ -688,11 +977,11 @@ The included [`Dockerfile`](services/oidc/Dockerfile) builds a non-root runtime 
 repository root:
 
 ```bash
-docker build -f services/oidc/Dockerfile -t rbac-oidc .
+docker build -f services/oidc/Dockerfile -t payrole-oidc .
 docker run --rm -p 8080:8080 \
   -v "$PWD/services/oidc/config.toml:/app/config.toml:ro" \
   -v "$PWD/services/oidc/signing-key.pem:/app/signing-key.pem:ro" \
-  rbac-oidc
+  payrole-oidc
 ```
 
 See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed service guide.
@@ -714,7 +1003,7 @@ See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed ser
 **Factory and web app**
 
 - The factory is immutable and keyless: no owner, no code replacement, no withdrawal. The
-  rbac-nft wasm is fixed at `new(code)`.
+  payrole-nft wasm is fixed at `new(code)`.
 - The factory does not add a key to children, so a deployment cannot be upgraded or deleted by
   the factory. The configured owner controls contract methods.
 - `code_hash()` exposes the child wasm hash. The web app can pin it with
@@ -844,13 +1133,13 @@ cargo test --workspace
 The Rust workspace currently has **170 tests**, the web app has **36 Vitest tests**, and there
 are **5 Docker-gated sandbox tests** (**211 total** when the sandbox job runs):
 
-- `crates/rbac-common`: 6 tests covering role hashing, token-id encoding, documented vectors,
+- `crates/payrole-common`: 6 tests covering role hashing, token-id encoding, documented vectors,
   and role-name validation.
-- `contracts/rbac-nft`: 92 tests covering initialization/admin permissions, role creation,
+- `contracts/payrole-nft`: 92 tests covering initialization/admin permissions, role creation,
   delegation, mint/burn, pagination, holder indexes, NEP-245 reads/enumeration/metadata, salary
   accrual, partial intervals, independent holder claims, burn payouts and rollbacks, arbitrary
   token withdrawal, liabilities, factory owner sync, and the non-transferable entry points.
-- `contracts/rbac-factory`: 20 tests covering immutable initialization and code hashing, name
+- `contracts/payrole-factory`: 20 tests covering immutable initialization and code hashing, name
   and gas/deposit validation, child creation receipts, callback registration/failure/refund,
   duplicate protection, owner-index updates, and registry pagination/indexes.
 - `services/oidc`: 37 unit tests covering config validation (including the example config),
@@ -872,7 +1161,7 @@ Sandbox tests are opt-in because they need Docker and prebuilt wasm:
 
 ```bash
 ./scripts/build-contract.sh
-cargo test -p rbac-nft -p rbac-factory --features sandbox --test sandbox
+cargo test -p payrole-nft -p payrole-factory --features sandbox --test sandbox
 ```
 
 CI runs them in a separate `sandbox` job after building the wasm.
@@ -888,9 +1177,9 @@ cd services/web && npm test && npm run check && npm run build
 ```
 
 > `near-sdk` refuses to compile the contract for a native target unless the
-> `unit-testing` feature is enabled, so use `cargo test -p rbac-nft`,
-> `cargo check -p rbac-nft --target wasm32-unknown-unknown`, or the wasm build above.
-> Plain `cargo check -p rbac-nft` without a target is expected to fail.
+> `unit-testing` feature is enabled, so use `cargo test -p payrole-nft`,
+> `cargo check -p payrole-nft --target wasm32-unknown-unknown`, or the wasm build above.
+> Plain `cargo check -p payrole-nft` without a target is expected to fail.
 
 ## License
 

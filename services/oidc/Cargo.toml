@@ -1,6 +1,6 @@
 [package]
-name = "rbac-oidc"
-description = "OIDC provider that maps NEAR RBAC role NFTs to off-chain access"
+name = "payrole-oidc"
+description = "OIDC provider that maps PayRole NFT roles to off-chain access"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ hex = "0.4"
 jsonwebtoken = "9.3"
 near-account-id = "3"
 rand = "0.8"
-rbac-common.workspace = true
+payrole-common.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rsa = { version = "0.9", features = ["sha2"] }
 serde.workspace = true

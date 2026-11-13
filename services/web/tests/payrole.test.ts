@@ -6,7 +6,7 @@ import {
   findRole,
   isRoleOwner,
   manageableRoles,
-} from "../src/lib/rbac";
+} from "../src/lib/payrole";
 import type { ContractSnapshot, RoleView } from "../src/lib/types";
 
 function role(overrides: Partial<RoleView> = {}): RoleView {
@@ -23,7 +23,7 @@ function role(overrides: Partial<RoleView> = {}): RoleView {
 
 function snapshot(overrides: Partial<ContractSnapshot> = {}): ContractSnapshot {
   const base: Omit<ContractSnapshot, "roles"> = {
-    accountId: "rbac.dao.testnet",
+    accountId: "payrole.dao.testnet",
     ownerId: "dao.testnet",
     salaryToken: "usdc.testnet",
     payoutIntervalNs: "604800000000000",

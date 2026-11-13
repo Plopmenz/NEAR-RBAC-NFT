@@ -1,9 +1,9 @@
-# Example configuration for the rbac-oidc provider.
+# Example configuration for the payrole-oidc provider.
 #
 # Copy this file to config.toml (which is git-ignored), replace the URLs and
 # account ids with your deployment, and run:
 #
-#   cargo run -p rbac-oidc -- services/oidc/config.toml
+#   cargo run -p payrole-oidc -- services/oidc/config.toml
 #
 # The issuer must be the public, HTTPS base URL of this service. It is used as
 # the JWT `iss` claim and as the prefix of every discovery URL, so it must match
@@ -15,7 +15,7 @@ listen = "127.0.0.1:8080"
 # NEAR JSON-RPC endpoint used to call `roles_of` on the contract and to check
 # that a NEP-413 public key is an access key of the claimed account.
 rpc_url = "https://rpc.testnet.near.org"
-contract_id = "rbac.testnet"
+contract_id = "payrole.testnet"
 
 # PKCS#8 PEM RSA private key used to sign JWTs. If this is omitted, a fresh
 # ephemeral key is generated at startup and all tokens become invalid on
