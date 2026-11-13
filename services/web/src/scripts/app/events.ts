@@ -13,7 +13,6 @@ import {
   scanOwned,
   scanRoles,
   selectTab,
-  updateWallet,
 } from "./actions";
 import { byId, showNotice, withBusy } from "./dom";
 import { state } from "./state";
@@ -29,20 +28,26 @@ export function bindEvents(): void {
     });
   });
 
-  byId<HTMLButtonElement>("wallet-button").addEventListener("click", () => {
-    if (!state.modal) {
-      showNotice("Wallet selector is still loading. Try again in a moment.", "error");
+  byId<HTMLButtonElement>("wallet-button").addEventListener("click", async () => {
+    if (!state.connector) {
+      showNotice("Wallet connector is still loading. Try again in a moment.", "error");
       return;
     }
-    state.modal.show();
+    try {
+      await state.connector.connect();
+    } catch (error) {
+      const message = walletErrorMessage(error);
+      // Closing the wallet picker is not an error worth surfacing.
+      if (!/user rejected|cancel/i.test(message)) {
+        showNotice(message, "error");
+      }
+    }
   });
 
   byId<HTMLButtonElement>("wallet-disconnect").addEventListener("click", async () => {
-    if (!state.selector) return;
+    if (!state.connector) return;
     try {
-      const wallet = await state.selector.wallet();
-      await wallet.signOut();
-      updateWallet(null);
+      await state.connector.disconnect(state.wallet ?? undefined);
     } catch (error) {
       showNotice(walletErrorMessage(error), "error");
     }

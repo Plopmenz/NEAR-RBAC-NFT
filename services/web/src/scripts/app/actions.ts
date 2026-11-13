@@ -19,8 +19,8 @@ import { loadMembershipContracts, loadOwnedContracts } from "../../lib/payrole";
 import { getFinalBlockTimestampNs } from "../../lib/rpc";
 import type { FactoryContractRecord } from "../../lib/types";
 import {
-  getWalletAccountId,
   initWallet,
+  restoreWallet,
   signAndSendFunctionCall,
   transactionHash,
   walletErrorMessage,
@@ -456,7 +456,7 @@ async function executeWrite(
   args: Record<string, unknown>,
   options: { deposit?: bigint; gas?: bigint } = {},
 ): Promise<boolean> {
-  if (!state.selector) {
+  if (!state.wallet) {
     setStatus(status, "Connect a NEAR wallet first.", "error");
     return false;
   }
@@ -467,7 +467,7 @@ async function executeWrite(
 
   setStatus(status, `${description} — confirm in your wallet…`);
   try {
-    const outcome = await signAndSendFunctionCall(state.selector, state.walletAccount, {
+    const outcome = await signAndSendFunctionCall(state.wallet, state.walletAccount, {
       contractId,
       methodName,
       args,
@@ -508,7 +508,7 @@ export async function handleDeploy(form: HTMLFormElement): Promise<void> {
     setStatus(status, "The factory is not ready to deploy contracts.", "error");
     return;
   }
-  if (!state.selector || !state.walletAccount) {
+  if (!state.wallet || !state.walletAccount) {
     setStatus(status, "Connect a NEAR wallet to pay for the deployment.", "error");
     return;
   }
@@ -557,7 +557,7 @@ export async function handleDeploy(form: HTMLFormElement): Promise<void> {
   const child = childAccountId(name, state.config.factoryContractId);
   setStatus(status, `Deploying ${child} — confirm in your wallet…`);
   try {
-    const outcome = await signAndSendFunctionCall(state.selector, state.walletAccount, {
+    const outcome = await signAndSendFunctionCall(state.wallet, state.walletAccount, {
       contractId: state.config.factoryContractId,
       methodName: "deploy",
       args: {
@@ -748,26 +748,30 @@ export async function startWallet(): Promise<void> {
     renderWallet();
   }
   try {
-    const wallet = await initWallet(state.config);
-    state.selector = wallet.selector;
-    state.modal = wallet.modal;
+    const connector = initWallet(state.config);
+    state.connector = connector;
 
-    wallet.selector.on("signedIn", ({ accounts }) => {
+    connector.on("wallet:signIn", ({ wallet, accounts, success }) => {
+      if (!success) return;
+      state.wallet = wallet;
       updateWallet(accounts[0]?.accountId ?? null);
       showNotice("Wallet connected.");
     });
-    wallet.selector.on("signedOut", () => {
+    connector.on("wallet:signOut", () => {
+      state.wallet = null;
       updateWallet(null);
       showNotice("Wallet disconnected.");
     });
-    wallet.selector.on("accountsChanged", ({ accounts }) => {
-      updateWallet(accounts[0]?.accountId ?? null);
-    });
 
-    updateWallet(getWalletAccountId(wallet.selector));
     renderWallet();
+
+    const restored = await restoreWallet(connector);
+    if (restored) {
+      state.wallet = restored.wallet;
+      updateWallet(restored.accountId);
+    }
   } catch (error) {
     renderWallet();
-    showNotice(`Wallet selector failed to load: ${walletErrorMessage(error)}`, "error");
+    showNotice(`Wallet connector failed to load: ${walletErrorMessage(error)}`, "error");
   }
 }

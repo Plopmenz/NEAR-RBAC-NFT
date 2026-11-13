@@ -320,7 +320,7 @@ the curl URLs) to another port. For the hosted web client, register
 │   ├── tests/oidc_flow.rs         # End-to-end HTTP tests
 │   ├── config.example.toml        # Annotated example configuration
 │   └── Dockerfile
-├── services/web/                  # Astro frontend (static, wallet-selector, no indexer)
+├── services/web/                  # Astro frontend (static, NEAR Connect, no indexer)
 │   ├── src/                       # Page, app modules, RPC/contract/favorites helpers
 │   └── tests/                     # Vitest unit tests
 ├── scripts/build-contract.sh      # Build/optimize contracts + test token into res/
@@ -771,7 +771,7 @@ subaccount name can be retried.
 ### Web app
 
 [`services/web`](services/web) is a static Astro app with vanilla TypeScript and
-wallet-selector. It has four views:
+NEAR Connect. It has four views:
 
 | View | Behavior |
 | --- | --- |
@@ -1122,8 +1122,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
   network layer if you need stronger isolation.
 - OAuth errors from `/authorize` are returned as JSON rather than redirected to the client's
   redirect URI. `/token` and `/login` follow the JSON error style.
-- The built-in login page relies on a NEP-413 wallet (`window.nearWallet` or wallet-selector)
-  or manual signature entry. It is a developer-friendly login, not a polished consent UI.
+- The built-in login page relies on a NEP-413 wallet (`window.nearWallet` or a browser wallet
+  extension) or manual signature entry. It is a developer-friendly login, not a polished consent UI.
 - No per-IP rate limiting, audit logging, or brute-force protection is built in. Rate-limit
   `/login`, `/authorize`, `/token`, and `/introspect` at the reverse proxy.
 - `verify_access_key=false` is unsafe outside local experiments; it removes the binding

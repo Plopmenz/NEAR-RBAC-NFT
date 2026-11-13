@@ -1,48 +1,42 @@
-import {
-  actionCreators,
-  getActiveAccount,
-  setupWalletSelector,
-  type FinalExecutionOutcome,
-  type Network,
-  type WalletSelector,
-} from "@near-wallet-selector/core";
-import { setupModal, type WalletSelectorModal } from "@near-wallet-selector/modal-ui";
-import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
+import { NearConnector, type NearWalletBase } from "@hot-labs/near-connect";
 
 import type { AppConfig } from "./types";
 
-export interface WalletHandle {
-  selector: WalletSelector;
-  modal: WalletSelectorModal;
+export type TransactionOutcome = Awaited<
+  ReturnType<NearWalletBase["signAndSendTransaction"]>
+>;
+
+export interface WalletSession {
+  wallet: NearWalletBase;
+  accountId: string;
 }
 
-export async function initWallet(config: AppConfig): Promise<WalletHandle> {
-  const network: Network = {
-    networkId: config.network,
-    nodeUrl: config.rpcUrl,
-    helperUrl: `https://helper.${config.network}.near.org`,
-    explorerUrl: config.explorerUrl,
-    indexerUrl: "https://api.kitwallet.app",
-  };
-
-  const selector = await setupWalletSelector({
-    network,
-    modules: [setupMyNearWallet()],
+/**
+ * Builds the NEAR Connect connector. NEAR Connect replaces NEAR Wallet Selector, which is
+ * deprecated. Wallets are loaded from a shared manifest at runtime and run sandboxed.
+ */
+export function initWallet(config: AppConfig): NearConnector {
+  return new NearConnector({
+    network: config.network,
+    // Only offer wallets that can sign and send transactions on the configured network.
+    features: {
+      signAndSendTransaction: true,
+      mainnet: config.network === "mainnet",
+      testnet: config.network === "testnet",
+    },
+    footerBranding: null,
   });
-  // Wallet modules require a contract for the sign-in state. Use the factory as the stable
-  // anchor; calls to individual payrole-nft children still work and fall back to a wallet
-  // confirmation when they are outside the factory's function-call key scope.
-  const modal = setupModal(selector, {
-    contractId: config.factoryContractId || undefined,
-    theme: "dark",
-    description: "Sign in to deploy and manage PayRole contracts.",
-  });
-
-  return { selector, modal };
 }
 
-export function getWalletAccountId(selector: WalletSelector): string | null {
-  return getActiveAccount(selector.store.getState())?.accountId ?? null;
+/** Restores a previous NEAR Connect session, if the wallet still reports an account. */
+export async function restoreWallet(connector: NearConnector): Promise<WalletSession | null> {
+  try {
+    const { wallet, accounts } = await connector.getConnectedWallet();
+    const accountId = accounts[0]?.accountId;
+    return accountId ? { wallet, accountId } : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface FunctionCallParams {
@@ -54,26 +48,28 @@ export interface FunctionCallParams {
 }
 
 export async function signAndSendFunctionCall(
-  selector: WalletSelector,
+  wallet: NearWalletBase,
   signerId: string,
   params: FunctionCallParams,
-): Promise<FinalExecutionOutcome | void> {
-  const wallet = await selector.wallet();
+): Promise<TransactionOutcome> {
   return wallet.signAndSendTransaction({
     signerId,
     receiverId: params.contractId,
     actions: [
-      actionCreators.functionCall(
-        params.methodName,
-        params.args ?? {},
-        params.gas ?? 100_000_000_000_000n,
-        params.deposit ?? 0n,
-      ),
+      {
+        type: "FunctionCall",
+        params: {
+          methodName: params.methodName,
+          args: params.args ?? {},
+          gas: (params.gas ?? 100_000_000_000_000n).toString(),
+          deposit: (params.deposit ?? 0n).toString(),
+        },
+      },
     ],
   });
 }
 
-export function transactionHash(outcome: FinalExecutionOutcome | void): string | null {
+export function transactionHash(outcome: TransactionOutcome | void): string | null {
   if (!outcome) return null;
   return outcome.transaction_outcome?.id ?? outcome.transaction?.hash ?? null;
 }

@@ -371,7 +371,7 @@ export function renderWallet(): void {
   account.title = connected ?? "";
   const connect = byId<HTMLButtonElement>("wallet-button");
   connect.textContent = connected ? "Switch wallet" : "Connect wallet";
-  connect.disabled = !state.modal;
+  connect.disabled = !state.connector;
   byId<HTMLButtonElement>("wallet-disconnect").hidden = !connected;
 }
 

@@ -1,5 +1,4 @@
-import type { WalletSelector } from "@near-wallet-selector/core";
-import type { WalletSelectorModal } from "@near-wallet-selector/modal-ui";
+import type { NearConnector, NearWalletBase } from "@hot-labs/near-connect";
 
 import type { AccessMap } from "../../lib/access";
 import { loadConfig } from "../../lib/config";
@@ -17,8 +16,8 @@ export type Tone = "muted" | "ok" | "error";
 
 export interface State {
   config: AppConfig;
-  selector: WalletSelector | null;
-  modal: WalletSelectorModal | null;
+  connector: NearConnector | null;
+  wallet: NearWalletBase | null;
   walletAccount: string | null;
   tab: Tab;
   factoryInfo: FactoryInfo | null;
@@ -46,8 +45,8 @@ const config = loadConfig();
 
 export const state: State = {
   config,
-  selector: null,
-  modal: null,
+  connector: null,
+  wallet: null,
   walletAccount: null,
   tab: "deploy",
   factoryInfo: null,

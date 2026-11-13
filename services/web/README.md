@@ -4,7 +4,7 @@ An Astro + TypeScript frontend for deploying and managing [`payrole-nft`](../../
 contracts through the [`payrole-factory`](../../contracts/payrole-factory).
 
 The app is fully static. It reads NEAR JSON-RPC directly and signs writes with
-[`@near-wallet-selector`](https://github.com/near/wallet-selector); there is no backend or
+[`@hot-labs/near-connect`](https://github.com/hot-dao/near-selector); there is no backend or
 indexer.
 
 PayRole exists so contributor DAOs can make work legible and payment predictable: roles are
@@ -159,7 +159,7 @@ live role NFTs. If no labels are configured, role names are used as sample label
 | `src/lib/payrole.ts` | Contract snapshots, membership discovery, permission helpers. |
 | `src/lib/access.ts` | Browser-local role → access-label mapping and ✓ / ✗ calculation. |
 | `src/lib/oidc.ts` | OIDC discovery, PKCE, callback token exchange, session storage, userinfo. |
-| `src/lib/wallet.ts` | Wallet selector setup and signed function calls. |
+| `src/lib/wallet.ts` | NEAR Connect setup and signed function calls. |
 | `src/lib/roles.ts` | Role id and token id derivation (must match `payrole-common`). |
 | `src/lib/favorites.ts` | Network/account-scoped `localStorage` favorites. |
 | `src/lib/format.ts` | Token amounts, durations, progress, parsing. |
