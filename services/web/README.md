@@ -13,14 +13,17 @@ indexer.
   any account, including a DAO or Trezu. If `PUBLIC_EXPECTED_CHILD_CODE_HASH` is set, deployment
   is blocked unless the immutable factory reports exactly that child wasm hash.
 - **Owned contracts** scans the factory registry, verifies each child's live `owner_id()`, and
-  shows contracts currently owned by the scanned address. Favorites are stored in
-  `localStorage` so spam contracts deployed with your account as owner can be hidden.
+  shows contracts currently owned by the scanned address. Each card shows the contract's
+  salary-token balance next to `accrued_liabilities()`, marked funded or underfunded. Favorites
+  are stored in `localStorage` so spam contracts deployed with your account as owner can be
+  hidden.
 - **My roles** scans the registry for role memberships held by an address, then shows salary,
   last claim, a payout-duration progress bar, and the currently claimable amount with a claim
   button.
-- Role owners can mint and burn memberships from either tab. Contract owners get controls for
-  role creation, role salaries, role-owner delegation, salary token/interval, and ownership
-  transfer.
+- Role owners can mint and burn memberships from either tab. Minting attaches the contract's
+  `required_mint_deposit()`; burning pays accrued salary first and asks for confirmation.
+  Contract owners get controls for role creation, role salaries, role-owner delegation, salary
+  token/interval, and ownership transfer.
 
 Discovery is registry-based instead of indexed. The registry is treated as a hint: the app
 always calls `owner_id()` / `roles_of()` on the child contract before trusting it.
@@ -46,6 +49,7 @@ cp .env.example .env
 | `PUBLIC_FACTORY_CONTRACT_ID` | yes | Factory account, e.g. `rbac-factory.testnet`. Without it, deployment and discovery are disabled and a banner is shown. |
 | `PUBLIC_EXPECTED_CHILD_CODE_HASH` | no | SHA-256 of the reviewed `rbac-nft` wasm. When set, the app refuses to deploy if `code_hash()` differs. |
 | `PUBLIC_EXPLORER_URL` | no | Explorer base URL. Defaults to NEARBlocks for the network. |
+| `PUBLIC_SITE_URL` | no | Absolute public URL used for the canonical link and Open Graph/Twitter image tags. When unset those tags are omitted. |
 
 These are **build-time** variables. Rebuild after changing them. A missing factory is not
 defaulted on purpose: silently pointing at the wrong registry would be worse than disabling the
@@ -74,24 +78,34 @@ provider for production.
 
 1. Connect a NEAR wallet. The connected account pays for deployments and signs admin calls.
 2. In **Deploy**, choose a subaccount name, the contract owner (your DAO/Trezu), the NEP-141
-   salary token, and the payout interval. The factory reports the minimum deposit; the app
-   pre-fills it. The panel shows the factory's child wasm hash and marks it pinned when it
-   matches `PUBLIC_EXPECTED_CHILD_CODE_HASH`. Excess deposit above the factory's fixed registry
-   reserve is forwarded to the child.
+   salary token, and the payout interval (30 days by default). The factory reports the minimum
+   deposit; the app pre-fills it. The panel shows the factory's child wasm hash and marks it
+   pinned when it matches `PUBLIC_EXPECTED_CHILD_CODE_HASH`. Excess deposit above the factory's
+   fixed registry reserve is forwarded to the child.
 3. In **Owned contracts**, scan the owner address. Favorite the contracts you care about.
 4. Open a contract's **Contract administration** panel to create roles, set salaries, delegate
    role owners, change payroll configuration, or transfer ownership.
 5. In **My roles**, scan a member address. Claim salary when the claimable amount is non-zero.
 
-Minting an existing role or burning a missing role fails on-chain. Burning discards unclaimed
-salary, so the UI asks for confirmation first.
+Minting an existing role or burning a missing role fails on-chain. Minting attaches the
+contract-reported storage deposit. Burning requests `pay_pending: true`, so accrued salary is
+transferred first; the confirmation explains this and a failed transfer keeps the membership.
+Write actions show a pending/disabled button and report success or error in the status line.
+The page ships a key/role-badge mark, a hero flow diagram, and a social preview image
+(`public/og.png`) for links shared from a `PUBLIC_SITE_URL`.
 
 ## Module map
 
 | File | Purpose |
 | --- | --- |
-| `src/pages/index.astro` | Page markup and tabs. |
-| `src/scripts/app.ts` | State, scanning, rendering, wallet actions. |
+| `src/pages/index.astro` | Page markup, branding, hero diagram, social tags. |
+| `src/scripts/app.ts` | Entry point: restores the URL, binds events and starts wallet loading. |
+| `src/scripts/app/state.ts` | Shared render state, runtime counters/caches, interval units. |
+| `src/scripts/app/dom.ts` | Element lookup, escaping, status/notice helpers, busy buttons. |
+| `src/scripts/app/views.ts` | Contract cards, role/member tables, admin forms, rendering. |
+| `src/scripts/app/intervals.ts` | Payout interval formatting and parsing. |
+| `src/scripts/app/actions.ts` | Registry scans, wallet actions, deploy/mint/burn/claim/admin calls. |
+| `src/scripts/app/events.ts` | DOM event wiring and per-form busy state. |
 | `src/lib/rpc.ts` | JSON-RPC view calls and final block timestamp. |
 | `src/lib/factory.ts` | Factory info and paginated registry reads. |
 | `src/lib/rbac.ts` | Contract snapshots, membership discovery, permission helpers. |

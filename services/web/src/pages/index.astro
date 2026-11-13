@@ -1,6 +1,13 @@
 ---
 import "@near-wallet-selector/modal-ui/styles.css";
 import "../styles/global.css";
+import { DEFAULT_PAYOUT_INTERVAL_NS } from "../lib/config";
+
+const siteUrl = (import.meta.env.PUBLIC_SITE_URL ?? "").trim().replace(/\/+$/, "");
+const description =
+  "Deploy and manage non-transferable RBAC role NFTs with on-chain salary streaming on NEAR.";
+const socialImage = siteUrl ? `${siteUrl}/og.png` : "";
+const defaultIntervalDays = (DEFAULT_PAYOUT_INTERVAL_NS / 86_400_000_000_000n).toString();
 ---
 
 <!doctype html>
@@ -8,17 +15,48 @@ import "../styles/global.css";
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Deploy and manage non-transferable RBAC role NFTs with on-chain salary streaming on NEAR."
-    />
+    <meta name="description" content={description} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>NEAR RBAC NFT</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="NEAR RBAC NFT" />
+    <meta property="og:description" content={description} />
+    <meta name="twitter:card" content={siteUrl ? "summary_large_image" : "summary"} />
+    <meta name="twitter:title" content="NEAR RBAC NFT" />
+    <meta name="twitter:description" content={description} />
+    {
+      siteUrl && (
+        <>
+          <link rel="canonical" href={siteUrl} />
+          <meta property="og:url" content={siteUrl} />
+          <meta property="og:image" content={socialImage} />
+          <meta property="og:image:alt" content="NEAR RBAC NFT key badge" />
+          <meta name="twitter:image" content={socialImage} />
+        </>
+      )
+    }
   </head>
   <body>
     <header class="topbar">
       <a class="brand" href="/">
-        <span class="brand-mark">R</span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" focusable="false">
+            <path
+              d="M16 2.5 27 7v8.5c0 6.5-4.4 11.6-11 14-6.6-2.4-11-7.5-11-14V7z"
+              fill="currentColor"
+              opacity="0.16"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linejoin="round"></path>
+            <circle cx="13" cy="13" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"></circle>
+            <path
+              d="M15.4 15.4 21 21m-2.2-.2 1.7-1.7m-4.1 0 1.7-1.7"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"></path>
+          </svg>
+        </span>
         <span>RBAC<span class="brand-accent">NFT</span></span>
       </a>
       <div class="topbar-right">
@@ -33,13 +71,67 @@ import "../styles/global.css";
 
     <main class="shell">
       <section class="hero">
-        <p class="eyebrow">Roles as non-transferable NFTs</p>
-        <h1>Payroll and access control for NEAR DAOs.</h1>
-        <p class="lede">
-          Deploy an RBAC contract in one transaction, grant roles as NEP-245 NFTs, and let
-          members claim NEP-141 salary per role. No indexer: discovery is read directly from the
-          factory registry and each contract.
-        </p>
+        <div class="hero-copy">
+          <p class="eyebrow">Roles as non-transferable NFTs</p>
+          <h1>Payroll and access control for NEAR DAOs.</h1>
+          <p class="lede">
+            Deploy an RBAC contract in one transaction, grant roles as NEP-245 NFTs, and let
+            members claim NEP-141 salary per role. No indexer: discovery is read directly from the
+            factory registry and each contract.
+          </p>
+        </div>
+        <div class="hero-art">
+          <svg viewBox="0 0 420 280" role="img" aria-labelledby="hero-diagram-title">
+            <title id="hero-diagram-title">
+              An immutable factory deploys a role NFT contract. Role badges gate access and unlock
+              NEP-141 salary claims.
+            </title>
+            <defs>
+              <linearGradient id="flow-accent" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#7cf5c8"></stop>
+                <stop offset="1" stop-color="#7aa9ff"></stop>
+              </linearGradient>
+            </defs>
+            <g class="flow-lines" stroke="url(#flow-accent)" stroke-width="2" fill="none">
+              <path d="M210 78v26" marker-end="url(#flow-arrow)"></path>
+              <path d="M210 168v26"></path>
+              <path d="M210 194H120v20" marker-end="url(#flow-arrow)"></path>
+              <path d="M210 194h90v20" marker-end="url(#flow-arrow)"></path>
+            </g>
+            <defs>
+              <marker
+                id="flow-arrow"
+                viewBox="0 0 10 10"
+                refX="8"
+                refY="5"
+                markerWidth="6"
+                markerHeight="6"
+                orient="auto-start-reverse">
+                <path d="M0 0 10 5 0 10z" fill="#7cf5c8"></path>
+              </marker>
+            </defs>
+            <g class="flow-node">
+              <rect x="30" y="16" width="360" height="62" rx="14"></rect>
+              <text x="52" y="43" class="flow-title">Immutable factory</text>
+              <text x="52" y="62" class="flow-sub">wasm pinning · on-chain registry</text>
+            </g>
+            <g class="flow-node accent">
+              <rect x="30" y="104" width="360" height="64" rx="14"></rect>
+              <text x="52" y="132" class="flow-title">RBAC role NFT contract</text>
+              <text x="52" y="151" class="flow-sub">per-role owner · salary per interval</text>
+            </g>
+            <g class="flow-node">
+              <rect x="30" y="216" width="170" height="56" rx="12"></rect>
+              <text x="50" y="241" class="flow-title">Role badge</text>
+              <text x="50" y="259" class="flow-sub">NEP-245 · has_role()</text>
+            </g>
+            <g class="flow-node">
+              <rect x="220" y="216" width="170" height="56" rx="12"></rect>
+              <text x="240" y="241" class="flow-title">Salary claim</text>
+              <text x="240" y="259" class="flow-sub">NEP-141 · every interval</text>
+            </g>
+          </svg>
+        </div>
       </section>
 
       <div class="warning" id="config-warning" hidden></div>
@@ -125,15 +217,15 @@ import "../styles/global.css";
                   type="number"
                   min="1"
                   step="1"
-                  value="7"
+                  value={defaultIntervalDays}
                   required
                 />
                 <select id="deploy-interval-unit" name="intervalUnit">
                   <option value="seconds">seconds</option>
                   <option value="minutes">minutes</option>
                   <option value="hours">hours</option>
-                  <option value="days">days</option>
-                  <option value="weeks" selected>weeks</option>
+                  <option value="days" selected>days</option>
+                  <option value="weeks">weeks</option>
                 </select>
               </div>
               <small>Salary accrues in full intervals of this length.</small>
@@ -172,7 +264,7 @@ import "../styles/global.css";
             <h3>Deployment cost</h3>
             <p class="muted">
               Each child stores its own copy of the rbac-nft wasm. The required deposit is roughly
-              4 NEAR depending on the wasm size and network storage price. The factory forwards
+              4.1 NEAR depending on the wasm size and network storage price. The factory forwards
               the deposit to the child; it is not a fee.
             </p>
             <p class="muted" id="factory-code-note"></p>

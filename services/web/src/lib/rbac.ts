@@ -59,18 +59,49 @@ async function loadAllRoles(rpcUrl: string, accountId: string): Promise<RoleView
   return roles;
 }
 
+async function loadOptional<T>(
+  rpcUrl: string,
+  accountId: string,
+  methodName: string,
+  args: Record<string, unknown> = {},
+): Promise<T | null> {
+  try {
+    return await viewFunction<T>(rpcUrl, accountId, methodName, args);
+  } catch {
+    return null;
+  }
+}
+
 export async function loadContractSnapshot(
   rpcUrl: string,
   accountId: string,
 ): Promise<ContractSnapshot> {
-  const [ownerId, salaryToken, payoutIntervalNs, roles] = await Promise.all([
-    viewFunction<string>(rpcUrl, accountId, "owner_id"),
-    viewFunction<string>(rpcUrl, accountId, "salary_token"),
-    viewFunction<string>(rpcUrl, accountId, "payout_interval_ns"),
-    loadAllRoles(rpcUrl, accountId),
+  const [ownerId, salaryToken, payoutIntervalNs, roles, requiredMintDeposit, accruedLiabilities] =
+    await Promise.all([
+      viewFunction<string>(rpcUrl, accountId, "owner_id"),
+      viewFunction<string>(rpcUrl, accountId, "salary_token"),
+      viewFunction<string>(rpcUrl, accountId, "payout_interval_ns"),
+      loadAllRoles(rpcUrl, accountId),
+      viewFunction<string>(rpcUrl, accountId, "required_mint_deposit"),
+      loadOptional<string>(rpcUrl, accountId, "accrued_liabilities"),
+    ]);
+  const [token, ftBalance] = await Promise.all([
+    loadFtMetadata(rpcUrl, salaryToken),
+    loadOptional<string>(rpcUrl, salaryToken, "ft_balance_of", {
+      account_id: accountId,
+    }),
   ]);
-  const token = await loadFtMetadata(rpcUrl, salaryToken);
-  return { accountId, ownerId, salaryToken, payoutIntervalNs, roles, token };
+  return {
+    accountId,
+    ownerId,
+    salaryToken,
+    payoutIntervalNs,
+    roles,
+    token,
+    requiredMintDeposit: String(requiredMintDeposit),
+    ftBalance: ftBalance === null ? null : String(ftBalance),
+    accruedLiabilities: accruedLiabilities === null ? null : String(accruedLiabilities),
+  };
 }
 
 /**

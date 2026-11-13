@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rbac_oidc::clock::{Clock, SystemClock};
@@ -6,6 +7,7 @@ use rbac_oidc::config::Config;
 use rbac_oidc::keys::KeyMaterial;
 use rbac_oidc::roles::{NearRpcRoleSource, RoleSource};
 use rbac_oidc::{build_router, AppState};
+use tokio::time::MissedTickBehavior;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -50,6 +52,8 @@ async fn main() -> Result<()> {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let state = AppState::new(config, keys, roles, clock);
 
+    spawn_store_sweeper(state.clone());
+
     tracing::info!(%address, "rbac-oidc listening");
 
     axum::serve(listener, build_router(state))
@@ -63,4 +67,20 @@ async fn shutdown_signal() {
     if let Err(err) = tokio::signal::ctrl_c().await {
         tracing::error!(%err, "failed to install the shutdown signal handler");
     }
+}
+
+/// Periodically removes expired pending logins, codes and sessions.
+fn spawn_store_sweeper(state: AppState) {
+    let interval_secs = state.config.store_sweep_interval_secs;
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let removed = state.store.prune_expired(state.clock.now()).await;
+            if removed > 0 {
+                tracing::debug!(removed, "pruned expired OIDC entries");
+            }
+        }
+    });
 }

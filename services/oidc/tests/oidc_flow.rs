@@ -123,6 +123,10 @@ struct TestApp {
 
 impl TestApp {
     fn new() -> Self {
+        Self::with_max_pending(10_000)
+    }
+
+    fn with_max_pending(max_pending_logins: usize) -> Self {
         let config = Config {
             issuer: ISSUER.to_owned(),
             listen: "127.0.0.1:0".to_owned(),
@@ -152,6 +156,8 @@ impl TestApp {
             id_token_ttl_secs: 900,
             authorization_code_ttl_secs: 300,
             pending_login_ttl_secs: 300,
+            max_pending_logins,
+            store_sweep_interval_secs: 60,
             signing_key_path: None,
             verify_access_key: true,
             allowed_scopes: vec![
@@ -1016,4 +1022,31 @@ async fn userinfo_requires_a_bearer_token() {
     let (status, error) = body_json(response).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(error["error"], "invalid_token");
+}
+
+#[tokio::test]
+async fn authorize_returns_429_when_pending_logins_are_full() {
+    let app = TestApp::with_max_pending(1);
+    let challenge = challenge();
+    let uri = format!(
+        "/authorize?{}",
+        encode_pairs(&[
+            ("response_type", "code"),
+            ("client_id", APP),
+            ("redirect_uri", APP_REDIRECT),
+            ("scope", "openid profile roles"),
+            ("state", "state-123"),
+            ("code_challenge", challenge.as_str()),
+            ("code_challenge_method", "S256"),
+        ])
+    );
+
+    let first = app.send(get(&uri)).await;
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = app.send(get(&uri)).await;
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    let (status, body) = body_json(second).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(body["error"], "temporarily_unavailable");
 }

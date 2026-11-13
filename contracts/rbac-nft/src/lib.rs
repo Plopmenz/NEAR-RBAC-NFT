@@ -23,7 +23,16 @@ use crate::metadata::{
 ///
 /// `claim` iterates a member's roles in one call. Capping the number keeps claims well inside the
 /// block gas limit and makes salary payout predictable.
+///
+/// This is a build-time constant, not a runtime setting: change it and redeploy the contract.
 pub const MAX_ROLES_PER_ACCOUNT: usize = 32;
+
+/// Bytes charged to a minter for one role membership.
+///
+/// `mint_role` is payable so that role owners cannot drain the contract's NEAR balance by minting
+/// memberships. The deposit covers the new holder entry and related bookkeeping. It is not
+/// refunded when the role is burned, because the storage is not reclaimed immediately.
+pub const MINT_STORAGE_RESERVE_BYTES: u128 = 1_024;
 
 const DEFAULT_PAGE_LIMIT: usize = 50;
 const MAX_PAGE_LIMIT: usize = 100;
@@ -65,6 +74,12 @@ trait FungibleToken {
     fn ft_transfer(&mut self, receiver_id: AccountId, amount: U128, memo: Option<String>);
 }
 
+#[allow(dead_code)]
+#[ext_contract(ext_factory)]
+trait Factory {
+    fn on_owner_changed(&mut self, new_owner_id: AccountId);
+}
+
 /// Non-transferable NEP-245 role NFT and salary contract.
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
@@ -75,6 +90,8 @@ pub struct Contract {
     salary_token: AccountId,
     /// Global payout interval in nanoseconds.
     payout_interval_ns: u64,
+    /// Factory that deployed this contract, if any. Used to keep the factory's owner index fresh.
+    factory_id: Option<AccountId>,
 
     /// role id -> role configuration. Iterable for metadata/enumeration.
     roles: IterableMap<u64, Role>,
@@ -82,8 +99,12 @@ pub struct Contract {
     role_by_name: LookupMap<String, u64>,
     /// account -> role ids. Kept flat because the number of roles per account is capped.
     owned_tokens: LookupMap<AccountId, Vec<u64>>,
-    /// role id -> member accounts. Used for role administration views.
-    role_holders: LookupMap<u64, Vec<AccountId>>,
+    /// (role id, holder index) -> member account. Sparse indexed storage avoids rewriting a Vec.
+    role_holders: LookupMap<(u64, u32), AccountId>,
+    /// (role id, account) -> holder index, used for O(1) removal.
+    holder_index: LookupMap<(u64, AccountId), u32>,
+    /// role id -> number of holders.
+    holder_count: LookupMap<u64, u32>,
     /// (role id, account) -> last salary claim timestamp in nanoseconds.
     last_claim: LookupMap<(u64, AccountId), u64>,
 }
@@ -95,18 +116,30 @@ impl Contract {
     /// `owner_id` should normally be the Sputnik DAO or Trezu account that governs this
     /// extension. `salary_token` is the NEP-141 token the contract pays salaries in, and
     /// `payout_interval_ns` is the global payout period (`1_000_000_000` = one second,
-    /// `604_800_000_000_000` = one week).
+    /// `2_592_000_000_000_000` = 30 days).
+    ///
+    /// `factory_id` is set by the factory to its own account id. The contract notifies it when
+    /// ownership changes so the factory's owner index stays current. Direct deployments should
+    /// pass `null`.
     #[init]
-    pub fn new(owner_id: AccountId, salary_token: AccountId, payout_interval_ns: U64) -> Self {
+    pub fn new(
+        owner_id: AccountId,
+        salary_token: AccountId,
+        payout_interval_ns: U64,
+        factory_id: Option<AccountId>,
+    ) -> Self {
         require!(payout_interval_ns.0 > 0, "payout interval must be positive");
         Self {
             owner_id,
             salary_token,
             payout_interval_ns: payout_interval_ns.0,
+            factory_id,
             roles: IterableMap::new(b"roles".as_slice()),
             role_by_name: LookupMap::new(b"role_names".as_slice()),
             owned_tokens: LookupMap::new(b"owned_tokens".as_slice()),
             role_holders: LookupMap::new(b"role_holders".as_slice()),
+            holder_index: LookupMap::new(b"holder_index".as_slice()),
+            holder_count: LookupMap::new(b"holder_count".as_slice()),
             last_claim: LookupMap::new(b"last_claim".as_slice()),
         }
     }
@@ -130,10 +163,37 @@ impl Contract {
         U64(self.payout_interval_ns)
     }
 
+    /// Returns the factory that deployed this contract, if any.
+    pub fn factory_id(&self) -> Option<AccountId> {
+        self.factory_id.clone()
+    }
+
+    /// Returns the NEAR deposit required to mint one role membership at the current storage price.
+    pub fn required_mint_deposit(&self) -> U128 {
+        U128(
+            env::storage_byte_cost()
+                .as_yoctonear()
+                .saturating_mul(MINT_STORAGE_RESERVE_BYTES),
+        )
+    }
+
     /// Transfers ownership of the extension. Only the current owner may call this.
-    pub fn set_owner(&mut self, new_owner_id: AccountId) {
+    ///
+    /// If the contract was deployed by a factory, it best-effort notifies the factory so the
+    /// factory's owner index can be updated. The ownership change succeeds even when that
+    /// notification fails; clients should always verify `owner_id()` on the child.
+    pub fn set_owner(&mut self, new_owner_id: AccountId) -> PromiseOrValue<bool> {
         self.assert_owner();
-        self.owner_id = new_owner_id;
+        self.owner_id = new_owner_id.clone();
+        if let Some(factory_id) = self.factory_id.clone() {
+            PromiseOrValue::Promise(
+                ext_factory::ext(factory_id)
+                    .with_static_gas(Gas::from_tgas(15))
+                    .on_owner_changed(new_owner_id),
+            )
+        } else {
+            PromiseOrValue::Value(true)
+        }
     }
 
     /// Updates the salary token and/or payout interval. Only the contract owner may call this.
@@ -232,6 +292,10 @@ impl Contract {
     /// Callable by the contract owner or the role owner. An account can hold each role at most
     /// once. The token id is the decimal role id, and the balance for that token type is `1`.
     /// Minting starts salary accrual at the current block timestamp.
+    ///
+    /// The call must attach at least [`Contract::required_mint_deposit`]; the deposit pays for the
+    /// new membership's storage and is not refunded when the role is burned.
+    #[payable]
     pub fn mint_role(&mut self, account_id: AccountId, role: String) -> String {
         let role_id = role_id(&role);
         let config = self
@@ -259,12 +323,17 @@ impl Contract {
             owned.len() < MAX_ROLES_PER_ACCOUNT,
             "account has reached the maximum number of roles"
         );
+
+        let required = self.required_mint_deposit().0;
+        require!(
+            env::attached_deposit().as_yoctonear() >= required,
+            "attached deposit is too low; call required_mint_deposit"
+        );
+
         owned.push(role_id);
         self.owned_tokens.insert(account_id.clone(), owned);
 
-        let mut holders = self.role_holders.get(&role_id).cloned().unwrap_or_default();
-        holders.push(account_id.clone());
-        self.role_holders.insert(role_id, holders);
+        self.add_holder(role_id, &account_id);
 
         let now = env::block_timestamp();
         self.last_claim.insert((role_id, account_id.clone()), now);
@@ -276,9 +345,18 @@ impl Contract {
 
     /// Burns an account's role NFT.
     ///
-    /// Callable by the contract owner or the role owner. Access stops immediately and unclaimed
-    /// salary for this role is discarded; call `claim` first if the member has accrued pay.
-    pub fn burn_role(&mut self, account_id: AccountId, role: String) {
+    /// Callable by the contract owner or the role owner. By default, any accrued salary for this
+    /// role is transferred to the member before the membership is removed. Pass
+    /// `pay_pending: false` to forfeit accrued salary instead.
+    ///
+    /// When pay is due, the transfer is asynchronous: if it fails, the membership is kept and the
+    /// claim timestamp is restored, so a failed payout never silently discards salary.
+    pub fn burn_role(
+        &mut self,
+        account_id: AccountId,
+        role: String,
+        pay_pending: Option<bool>,
+    ) -> PromiseOrValue<bool> {
         let role_id = role_id(&role);
         let config = self
             .roles
@@ -295,28 +373,45 @@ impl Contract {
             "account does not have this role"
         );
 
-        if let Some(mut owned) = self.owned_tokens.get(&account_id).cloned() {
-            owned.retain(|id| *id != role_id);
-            if owned.is_empty() {
-                self.owned_tokens.remove(&account_id);
-            } else {
-                self.owned_tokens.insert(account_id.clone(), owned);
-            }
-        }
-        if let Some(mut holders) = self.role_holders.get(&role_id).cloned() {
-            holders.retain(|account| account != &account_id);
-            if holders.is_empty() {
-                self.role_holders.remove(&role_id);
-            } else {
-                self.role_holders.insert(role_id, holders);
-            }
-        }
-        self.last_claim.remove(&(role_id, account_id.clone()));
-
         let caller = env::predecessor_account_id();
         let authorized_id = (caller != account_id).then_some(caller);
-        let token_id = token_id(role_id);
-        events::emit_burn(&account_id, &token_id, authorized_id);
+        let amount = self.claimable_role_amount(&account_id, role_id);
+        let pay_pending = pay_pending.unwrap_or(true);
+
+        if !pay_pending || amount == 0 {
+            self.remove_member(&account_id, role_id, authorized_id);
+            return PromiseOrValue::Value(true);
+        }
+
+        let key = (role_id, account_id.clone());
+        let now = env::block_timestamp();
+        let interval = self.payout_interval_ns;
+        let last = self.last_claim.get(&key).copied().unwrap_or(now);
+        let periods = now.saturating_sub(last) / interval;
+        let advance_ns = periods
+            .checked_mul(interval)
+            .unwrap_or_else(|| env::panic_str("claim timestamp overflow"));
+        let next = last
+            .checked_add(advance_ns)
+            .unwrap_or_else(|| env::panic_str("claim timestamp overflow"));
+        self.last_claim.insert(key, next);
+
+        let promise = ext_ft::ext(self.salary_token.clone())
+            .with_attached_deposit(NearToken::from_yoctonear(1))
+            .with_static_gas(Gas::from_tgas(30))
+            .ft_transfer(account_id.clone(), U128(amount), None)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(Gas::from_tgas(25))
+                    .on_burn_transfer(
+                        account_id.clone(),
+                        U64(role_id),
+                        U64(last),
+                        U128(amount),
+                        authorized_id,
+                    ),
+            );
+        PromiseOrValue::Promise(promise)
     }
 
     /// Returns true when `account_id` currently holds `role`.
@@ -361,12 +456,25 @@ impl Contract {
         role_ids.into_iter().map(U64).collect()
     }
 
-    /// Returns the members of a role.
-    pub fn members_of(&self, role: String) -> Vec<AccountId> {
+    /// Returns a page of members of a role.
+    ///
+    /// Holders are stored in indexed maps, so membership reads are O(limit) rather than O(n).
+    /// The order is insertion order except that burning a member swaps the last holder into the
+    /// removed slot. Sort off-chain if a stable display order is required.
+    pub fn members_of(
+        &self,
+        role: String,
+        from_index: Option<U128>,
+        limit: Option<u32>,
+    ) -> Vec<AccountId> {
         let role_id = role_id(&role);
-        let mut members = self.role_holders.get(&role_id).cloned().unwrap_or_default();
-        members.sort();
-        members
+        let (from, limit) = pagination(from_index, limit);
+        let count = self.holder_count(role_id);
+        let from = u32::try_from(from).unwrap_or(u32::MAX).min(count);
+        let end = from.saturating_add(limit as u32).min(count);
+        (from..end)
+            .filter_map(|index| self.role_holders.get(&(role_id, index)).cloned())
+            .collect()
     }
 
     // ---------------------------------------------------------------------
@@ -406,6 +514,58 @@ impl Contract {
             .map(U64)
     }
 
+    /// Returns the total salary currently owed to all members across all roles.
+    ///
+    /// This is a view for funding checks: compare it with the contract's balance from the token's
+    /// `ft_balance_of(contract_id)`. The contract cannot read that balance itself, so the web app
+    /// composes both. This view is O(number of memberships); for large deployments use
+    /// [`Contract::accrued_liabilities_for_role`] for individual roles.
+    pub fn accrued_liabilities(&self) -> U128 {
+        let now = env::block_timestamp();
+        U128(
+            self.roles
+                .iter()
+                .map(|(role_id, _)| self.role_liability(*role_id, now))
+                .fold(0u128, |total, amount| {
+                    total
+                        .checked_add(amount)
+                        .unwrap_or_else(|| env::panic_str("liability overflow"))
+                }),
+        )
+    }
+
+    /// Returns the salary currently owed to members of one role.
+    pub fn accrued_liabilities_for_role(&self, role: String) -> U128 {
+        U128(self.role_liability(role_id(&role), env::block_timestamp()))
+    }
+
+    /// Withdraws NEP-141 tokens from the contract. Only the contract owner may call this.
+    ///
+    /// `token` is any NEP-141 account, not just the configured salary token, so the owner can
+    /// recover balances stranded after `set_payout_config` switches tokens. Attach at least
+    /// 1 yoctoNEAR for the `ft_transfer` call.
+    ///
+    /// This also lets the owner withdraw funds reserved for salaries, so the owner remains a
+    /// trusted party. Use [`Contract::accrued_liabilities`] to check funding before withdrawing.
+    #[payable]
+    pub fn withdraw_ft(
+        &mut self,
+        token: AccountId,
+        receiver_id: AccountId,
+        amount: U128,
+    ) -> Promise {
+        self.assert_owner();
+        require!(amount.0 > 0, "amount must be positive");
+        require!(
+            env::attached_deposit() >= NearToken::from_yoctonear(1),
+            "attach at least 1 yoctoNEAR for the token transfer"
+        );
+        ext_ft::ext(token)
+            .with_attached_deposit(NearToken::from_yoctonear(1))
+            .with_static_gas(Gas::from_tgas(30))
+            .ft_transfer(receiver_id, amount, None)
+    }
+
     /// Called by the salary token transfer promise. Restores claim timestamps if the transfer
     /// failed. Restricted to self.
     #[private]
@@ -427,6 +587,37 @@ impl Contract {
                     self.last_claim
                         .insert((role_id, account_id.clone()), previous);
                 }
+            }
+            false
+        }
+    }
+
+    /// Called after the salary transfer that precedes a burn.
+    ///
+    /// On success the membership is removed. On failure the previous claim timestamp is restored
+    /// and the membership is kept, so accrued salary is never silently discarded.
+    #[private]
+    pub fn on_burn_transfer(
+        &mut self,
+        account_id: AccountId,
+        role_id: U64,
+        previous_last_claim: U64,
+        _amount: U128,
+        authorized_id: Option<AccountId>,
+    ) -> bool {
+        require!(
+            env::promise_results_count() == 1,
+            "expected exactly one promise result"
+        );
+        if env::promise_result_checked(0, 1024).is_ok() {
+            if self.is_member(&account_id, role_id.0) {
+                self.remove_member(&account_id, role_id.0, authorized_id);
+            }
+            true
+        } else {
+            if self.is_member(&account_id, role_id.0) {
+                self.last_claim
+                    .insert((role_id.0, account_id), previous_last_claim.0);
             }
             false
         }
@@ -466,12 +657,7 @@ impl Contract {
     pub fn mt_supply(&self, token_id: String) -> Option<U128> {
         let role_id = parse_token_id(&token_id)?;
         self.roles.get(&role_id)?;
-        let holders = self
-            .role_holders
-            .get(&role_id)
-            .map(|holders| holders.len() as u128)
-            .unwrap_or(0);
-        Some(U128(holders))
+        Some(U128(self.holder_count(role_id) as u128))
     }
 
     /// NEP-245: batch supply.
@@ -702,12 +888,73 @@ impl Contract {
             owner: config.effective_owner(&self.owner_id),
             configured_owner: config.owner.clone(),
             salary: U128(config.salary),
-            holders: self
-                .role_holders
-                .get(&role_id)
-                .map(|holders| holders.len() as u64)
-                .unwrap_or(0),
+            holders: u64::from(self.holder_count(role_id)),
         }
+    }
+
+    fn holder_count(&self, role_id: u64) -> u32 {
+        self.holder_count.get(&role_id).copied().unwrap_or(0)
+    }
+
+    fn add_holder(&mut self, role_id: u64, account_id: &AccountId) {
+        let index = self.holder_count(role_id);
+        self.role_holders
+            .insert((role_id, index), account_id.clone());
+        self.holder_index
+            .insert((role_id, account_id.clone()), index);
+        self.holder_count.insert(role_id, index + 1);
+    }
+
+    /// Removes a holder in O(1) by swapping the last holder into the freed slot.
+    fn remove_holder(&mut self, role_id: u64, account_id: &AccountId) {
+        let Some(index) = self
+            .holder_index
+            .get(&(role_id, account_id.clone()))
+            .copied()
+        else {
+            return;
+        };
+        let count = self.holder_count(role_id);
+        if count == 0 {
+            return;
+        }
+        let last_index = count - 1;
+        if index != last_index {
+            if let Some(last_account) = self.role_holders.get(&(role_id, last_index)).cloned() {
+                self.role_holders
+                    .insert((role_id, index), last_account.clone());
+                self.holder_index.insert((role_id, last_account), index);
+            }
+        }
+        self.role_holders.remove(&(role_id, last_index));
+        self.holder_index.remove(&(role_id, account_id.clone()));
+        if last_index == 0 {
+            self.holder_count.remove(&role_id);
+        } else {
+            self.holder_count.insert(role_id, last_index);
+        }
+    }
+
+    /// Removes a membership from every index and emits the NEP-245 burn event.
+    fn remove_member(
+        &mut self,
+        account_id: &AccountId,
+        role_id: u64,
+        authorized_id: Option<AccountId>,
+    ) {
+        if let Some(mut owned) = self.owned_tokens.get(account_id).cloned() {
+            owned.retain(|id| *id != role_id);
+            if owned.is_empty() {
+                self.owned_tokens.remove(account_id);
+            } else {
+                self.owned_tokens.insert(account_id.clone(), owned);
+            }
+        }
+        self.remove_holder(role_id, account_id);
+        self.last_claim.remove(&(role_id, account_id.clone()));
+
+        let token_id = token_id(role_id);
+        events::emit_burn(account_id, &token_id, authorized_id);
     }
 
     fn is_member(&self, account_id: &AccountId, role_id: u64) -> bool {
@@ -745,12 +992,7 @@ impl Contract {
             decimals: Some("0".to_owned()),
             base_uri: None,
             reference: None,
-            copies: Some(
-                self.role_holders
-                    .get(&role_id)
-                    .map(|holders| holders.len() as u64)
-                    .unwrap_or(0),
-            ),
+            copies: Some(u64::from(self.holder_count(role_id))),
             reference_hash: None,
         }
     }
@@ -760,11 +1002,7 @@ impl Contract {
             .roles
             .get(&role_id)
             .unwrap_or_else(|| env::panic_str("unknown role id for token"));
-        let holders = self
-            .role_holders
-            .get(&role_id)
-            .map(|holders| holders.len())
-            .unwrap_or(0);
+        let holders = self.holder_count(role_id);
         let extra = near_sdk::serde_json::json!({
             "role": role.name,
             "role_id": role_id.to_string(),
@@ -813,6 +1051,51 @@ impl Contract {
             total = total
                 .checked_add(amount)
                 .unwrap_or_else(|| env::panic_str("total claim overflow"));
+        }
+        total
+    }
+
+    /// Accrued salary for one member in one role.
+    fn claimable_role_amount(&self, account_id: &AccountId, role_id: u64) -> u128 {
+        let Some(role) = self.roles.get(&role_id) else {
+            return 0;
+        };
+        let now = env::block_timestamp();
+        let last = self
+            .last_claim
+            .get(&(role_id, account_id.clone()))
+            .copied()
+            .unwrap_or(now);
+        let periods = now.saturating_sub(last) / self.payout_interval_ns;
+        (periods as u128)
+            .checked_mul(role.salary)
+            .unwrap_or_else(|| env::panic_str("claim amount overflow"))
+    }
+
+    /// Total salary owed to all current holders of a role at `now`.
+    fn role_liability(&self, role_id: u64, now: u64) -> u128 {
+        let Some(role) = self.roles.get(&role_id) else {
+            return 0;
+        };
+        let interval = self.payout_interval_ns;
+        let count = self.holder_count(role_id);
+        let mut total = 0u128;
+        for index in 0..count {
+            let Some(holder) = self.role_holders.get(&(role_id, index)) else {
+                continue;
+            };
+            let last = self
+                .last_claim
+                .get(&(role_id, holder.clone()))
+                .copied()
+                .unwrap_or(now);
+            let periods = now.saturating_sub(last) / interval;
+            let amount = (periods as u128)
+                .checked_mul(role.salary)
+                .unwrap_or_else(|| env::panic_str("liability overflow"));
+            total = total
+                .checked_add(amount)
+                .unwrap_or_else(|| env::panic_str("liability overflow"));
         }
         total
     }

@@ -28,6 +28,9 @@ function snapshot(overrides: Partial<ContractSnapshot> = {}): ContractSnapshot {
     salaryToken: "usdc.testnet",
     payoutIntervalNs: "604800000000000",
     token: { decimals: 6, symbol: "USDC", name: "USD Coin", fallback: false },
+    requiredMintDeposit: "1024000000000000000000",
+    ftBalance: "5000000000",
+    accruedLiabilities: "2500000000",
   };
   return {
     ...base,

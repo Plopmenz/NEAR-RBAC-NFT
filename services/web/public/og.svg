@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="NEAR RBAC NFT: non-transferable role NFTs with on-chain salary streaming">
+  <defs>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7cf5c8"/>
+      <stop offset="1" stop-color="#54d9ff"/>
+    </linearGradient>
+    <radialGradient id="glow-a" cx="0.1" cy="0" r="0.8">
+      <stop offset="0" stop-color="#7cf5c8" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#7cf5c8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-b" cx="1" cy="0.1" r="0.7">
+      <stop offset="0" stop-color="#7aa9ff" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#7aa9ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#080c11"/>
+  <rect width="1200" height="630" fill="url(#glow-a)"/>
+  <rect width="1200" height="630" fill="url(#glow-b)"/>
+
+  <g transform="translate(90 120)">
+    <rect width="104" height="104" rx="26" fill="#0d1b1a" stroke="#7cf5c8" stroke-opacity="0.55" stroke-width="3"/>
+    <g transform="translate(16 14) scale(2.25)" fill="none" stroke="url(#accent)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 2.5 27 7v8.5c0 6.5-4.4 11.6-11 14-6.6-2.4-11-7.5-11-14V7z" fill="#7cf5c8" fill-opacity="0.12"/>
+      <circle cx="13" cy="13" r="3.2"/>
+      <path d="M15.4 15.4 21 21m-2.2-.2 1.7-1.7m-4.1 0 1.7-1.7"/>
+    </g>
+  </g>
+
+  <text x="90" y="316" fill="#e8eef4" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="78" font-weight="800" letter-spacing="-2">
+    NEAR <tspan fill="#7cf5c8">RBAC</tspan> NFT
+  </text>
+  <text x="92" y="380" fill="#93a4b5" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="31">
+    Non-transferable role NFTs with on-chain salary streaming.
+  </text>
+
+  <g font-family="JetBrains Mono, ui-monospace, SFMono-Regular, monospace" font-size="22" fill="#c8f7e7">
+    <g transform="translate(92 436)">
+      <rect width="232" height="54" rx="27" fill="#7cf5c8" fill-opacity="0.1" stroke="#7cf5c8" stroke-opacity="0.4"/>
+      <text x="26" y="35">NEP-245 roles</text>
+    </g>
+    <g transform="translate(344 436)">
+      <rect width="244" height="54" rx="27" fill="#7cf5c8" fill-opacity="0.1" stroke="#7cf5c8" stroke-opacity="0.4"/>
+      <text x="26" y="35">NEP-141 salary</text>
+    </g>
+    <g transform="translate(608 436)">
+      <rect width="268" height="54" rx="27" fill="#7cf5c8" fill-opacity="0.1" stroke="#7cf5c8" stroke-opacity="0.4"/>
+      <text x="26" y="35">factory registry</text>
+    </g>
+  </g>
+
+  <g transform="translate(90 556)" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="21" fill="#93a4b5">
+    <text>Deploy · grant roles · claim per interval · verify with has_role()</text>
+  </g>
+
+  <g transform="translate(940 120)" fill="none" stroke="#34485c" stroke-width="2">
+    <rect x="0" y="0" width="170" height="64" rx="14" fill="#0d141c"/>
+    <text x="20" y="28" fill="#e8eef4" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" stroke="none">Factory</text>
+    <text x="20" y="49" fill="#93a4b5" font-family="JetBrains Mono, monospace" font-size="12" stroke="none">immutable wasm</text>
+
+    <path d="M85 66v26" stroke="#7cf5c8" stroke-opacity="0.6"/>
+    <rect x="0" y="94" width="170" height="64" rx="14" fill="#0d141c"/>
+    <text x="20" y="122" fill="#e8eef4" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" stroke="none">Role contract</text>
+    <text x="20" y="143" fill="#93a4b5" font-family="JetBrains Mono, monospace" font-size="12" stroke="none">owner + payroll</text>
+
+    <path d="M85 160v26" stroke="#7cf5c8" stroke-opacity="0.6"/>
+    <rect x="0" y="188" width="170" height="64" rx="14" fill="#0d141c"/>
+    <text x="20" y="216" fill="#e8eef4" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" stroke="none">Role badge</text>
+    <text x="20" y="237" fill="#93a4b5" font-family="JetBrains Mono, monospace" font-size="12" stroke="none">has_role()</text>
+  </g>
+</svg>

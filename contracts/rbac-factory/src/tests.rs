@@ -246,6 +246,7 @@ fn deploy_creates_and_initializes_child() {
                 assert_eq!(args["owner_id"], OWNER_ID);
                 assert_eq!(args["salary_token"], SALARY_TOKEN_ID);
                 assert_eq!(args["payout_interval_ns"], INTERVAL_NS.to_string());
+                assert_eq!(args["factory_id"], FACTORY_ID);
                 saw_init = true;
             }
             _ => {}
@@ -351,18 +352,17 @@ fn registry_paginates_in_insertion_order() {
 }
 
 #[test]
-fn registry_indexes_owner_and_deployer() {
+fn registry_indexes_current_owner() {
     let mut factory = with_code();
     register(&mut factory, "one");
 
-    // Deploy a second child for a different owner and deployer.
+    // Deploy a second child for a different owner.
     let other_owner = account("other-dao.test.near");
-    let other_deployer = account("bob.test.near");
     set_env_with_results(FACTORY_ID, vec![PromiseResult::Successful(vec![])]);
     assert!(factory.on_deploy(make_record(
         "two",
         other_owner.clone(),
-        other_deployer.clone(),
+        deployer(),
         U64(2_000_000),
     )));
 
@@ -374,17 +374,65 @@ fn registry_indexes_owner_and_deployer() {
     assert_eq!(by_owner.len(), 1);
     assert_eq!(by_owner[0].name, "two");
 
-    let by_deployer = factory.contracts_of_deployer(deployer(), None, None);
-    assert_eq!(by_deployer.len(), 1);
-    assert_eq!(by_deployer[0].name, "one");
-
-    let by_deployer = factory.contracts_of_deployer(other_deployer, None, None);
-    assert_eq!(by_deployer.len(), 1);
-    assert_eq!(by_deployer[0].name, "two");
-
     assert!(factory
         .contracts_of_owner(account("nobody.test.near"), None, None)
         .is_empty());
+}
+
+#[test]
+fn on_owner_changed_moves_the_child_between_indexes() {
+    let mut factory = with_code();
+    register(&mut factory, "acme");
+
+    let new_owner = account("new-dao.test.near");
+    let child = account("acme.factory.test.near");
+    set_env_with_results(child.as_str(), vec![]);
+    assert!(factory.on_owner_changed(new_owner.clone()));
+
+    assert_eq!(record(&factory, "acme").owner_id, new_owner);
+    assert!(factory.contracts_of_owner(owner(), None, None).is_empty());
+    let moved = factory.contracts_of_owner(new_owner.clone(), None, None);
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].account_id, child);
+
+    // A repeated notification is idempotent.
+    set_env_with_results(child.as_str(), vec![]);
+    assert!(factory.on_owner_changed(new_owner.clone()));
+    assert_eq!(factory.contracts_of_owner(new_owner, None, None).len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "caller is not a registered child")]
+fn on_owner_changed_rejects_unknown_callers() {
+    let mut factory = with_code();
+    set_env_with_results("mallory.test.near", vec![]);
+    factory.on_owner_changed(owner());
+}
+
+#[test]
+fn on_deploy_failure_refunds_the_registry_reserve() {
+    let mut factory = with_code();
+    set_env_with_results(FACTORY_ID, vec![PromiseResult::Failed]);
+    assert!(!factory.on_deploy(make_record("acme", owner(), deployer(), U64(1_000_000))));
+
+    let receipts = get_created_receipts();
+    let refund = receipts
+        .iter()
+        .find(|receipt| receipt.receiver_id == deployer())
+        .expect("refund receipt to the deployer");
+    let expected =
+        near_sdk::env::storage_byte_cost().as_yoctonear() * crate::REGISTRY_RESERVE_BYTES;
+    assert_eq!(
+        refund
+            .actions
+            .iter()
+            .map(|action| match action {
+                MockAction::Transfer { deposit, .. } => deposit.as_yoctonear(),
+                _ => 0,
+            })
+            .sum::<u128>(),
+        expected
+    );
 }
 
 #[test]

@@ -6,6 +6,8 @@ export interface AppConfig {
   factoryContractId: string;
   expectedChildCodeHash: string;
   explorerUrl: string;
+  /** Absolute site URL used for canonical and social preview tags. Empty when unset. */
+  siteUrl: string;
 }
 
 export interface FactoryContractRecord {
@@ -41,6 +43,12 @@ export interface ContractSnapshot {
   payoutIntervalNs: string;
   roles: RoleView[];
   token: FtMetadata;
+  /** Deposit required by `mint_role`, in yoctoNEAR, as reported by the contract. */
+  requiredMintDeposit: string;
+  /** Contract's balance of the salary token in raw units, or null when the read failed. */
+  ftBalance: string | null;
+  /** Salary accrued but not yet claimed in raw token units, or null when the read failed. */
+  accruedLiabilities: string | null;
 }
 
 export interface RoleMembership {

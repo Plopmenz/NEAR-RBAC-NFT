@@ -29,6 +29,14 @@ fn default_pending_login_ttl_secs() -> u64 {
     300
 }
 
+fn default_max_pending_logins() -> usize {
+    10_000
+}
+
+fn default_store_sweep_interval_secs() -> u64 {
+    60
+}
+
 fn default_true() -> bool {
     true
 }
@@ -108,6 +116,13 @@ pub struct Config {
     #[serde(default = "default_pending_login_ttl_secs")]
     pub pending_login_ttl_secs: u64,
 
+    /// Maximum number of live pending logins. `/authorize` returns 429 when this is reached.
+    #[serde(default = "default_max_pending_logins")]
+    pub max_pending_logins: usize,
+    /// How often expired pending logins, codes and sessions are swept, in seconds.
+    #[serde(default = "default_store_sweep_interval_secs")]
+    pub store_sweep_interval_secs: u64,
+
     /// Optional PKCS#8 PEM RSA private key. If omitted, an ephemeral key is generated at startup.
     #[serde(default)]
     pub signing_key_path: Option<PathBuf>,
@@ -157,6 +172,12 @@ impl Config {
         }
         if self.pending_login_ttl_secs == 0 {
             bail!("pending_login_ttl_secs must be positive");
+        }
+        if self.max_pending_logins == 0 {
+            bail!("max_pending_logins must be positive");
+        }
+        if self.store_sweep_interval_secs == 0 {
+            bail!("store_sweep_interval_secs must be positive");
         }
         if !self.allowed_scopes.iter().any(|scope| scope == "openid") {
             bail!("allowed_scopes must contain the openid scope");
@@ -258,6 +279,8 @@ mod tests {
             id_token_ttl_secs: 900,
             authorization_code_ttl_secs: 300,
             pending_login_ttl_secs: 300,
+            max_pending_logins: 10_000,
+            store_sweep_interval_secs: 60,
             signing_key_path: None,
             verify_access_key: true,
             allowed_scopes: default_allowed_scopes(),
@@ -307,6 +330,30 @@ mod tests {
         let mut config = base_config();
         config.allowed_scopes = vec!["profile".to_owned()];
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_zero_pending_cap_and_sweep_interval() {
+        let mut config = base_config();
+        config.max_pending_logins = 0;
+        assert!(config.validate().is_err());
+
+        let mut config = base_config();
+        config.store_sweep_interval_secs = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn store_hardening_defaults_apply_when_omitted() {
+        let mut text = include_str!("../config.example.toml").to_owned();
+        text = text
+            .lines()
+            .filter(|line| !line.starts_with("max_pending_logins"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config: Config = toml::from_str(&text).unwrap();
+        assert_eq!(config.max_pending_logins, 10_000);
+        assert_eq!(config.store_sweep_interval_secs, 60);
     }
 
     #[test]

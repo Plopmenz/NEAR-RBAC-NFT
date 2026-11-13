@@ -75,18 +75,19 @@ token.
 │       ├── lib.rs                 # Contract methods
 │       ├── metadata.rs            # NEP-245 role-level metadata types
 │       ├── events.rs              # NEP-297 mt_mint / mt_burn events
-│       └── tests/                 # 79 unit tests
+│       └── tests/                 # Unit + sandbox tests
 ├── contracts/rbac-factory/        # Immutable factory and deployment registry
-│   └── src/                       # deploy/registry + 17 tests
+│   └── src/                       # deploy/registry, callbacks + tests
+├── test-contracts/mock-ft/        # Minimal NEP-141 used by the sandbox tests
 ├── services/oidc/                 # OIDC provider (axum)
 │   ├── src/                       # Config, NEP-413, RPC role source, JWT, handlers
-│   ├── tests/oidc_flow.rs         # 14 end-to-end HTTP tests
+│   ├── tests/oidc_flow.rs         # End-to-end HTTP tests
 │   ├── config.example.toml        # Annotated example configuration
 │   └── Dockerfile
 ├── services/web/                  # Astro frontend (static, wallet-selector, no indexer)
-│   ├── src/                       # Page, orchestration, RPC/contract/favorites helpers
-│   └── tests/                     # 32 Vitest unit tests
-├── scripts/build-contract.sh      # Build/optimize both wasm artifacts into res/
+│   ├── src/                       # Page, app modules, RPC/contract/favorites helpers
+│   └── tests/                     # Vitest unit tests
+├── scripts/build-contract.sh      # Build/optimize contracts + test token into res/
 ├── scripts/deploy-factory.sh      # Deploy the immutable factory with pinned child wasm
 └── .github/workflows/ci.yml
 ```
@@ -127,10 +128,12 @@ npm run build
 cargo build -p rbac-nft -p rbac-factory --target wasm32-unknown-unknown --release
 ```
 
-The artifacts are `res/rbac_nft.wasm` and `res/rbac_factory.wasm` (the script also leaves
-them under `target/wasm32-unknown-unknown/release/`). The release profile uses `opt-level = "z"`,
-LTO, one codegen unit, abort-on-panic, overflow checks, and symbol stripping. If `wasm-opt` is on
-your `PATH`, the script also runs `wasm-opt -Oz`.
+The script also builds `test-contracts/mock-ft` into `res/mock_ft.wasm` for the sandbox tests;
+that token is not a production artifact. The contract artifacts are `res/rbac_nft.wasm` and
+`res/rbac_factory.wasm` (the script also leaves them under
+`target/wasm32-unknown-unknown/release/`). The release profile uses `opt-level = "z"`, LTO, one
+codegen unit, abort-on-panic, overflow checks, and symbol stripping. If `wasm-opt` is on your
+`PATH`, the script also runs `wasm-opt -Oz`.
 
 ### Deploy
 
@@ -152,7 +155,7 @@ near deploy \
   --accountId rbac.testnet \
   --wasmFile res/rbac_nft.wasm \
   --initFunction new \
-  --initArgs '{"owner_id":"dao.testnet","salary_token":"usdc.testnet","payout_interval_ns":"604800000000000"}'
+  --initArgs '{"owner_id":"dao.testnet","salary_token":"usdc.testnet","payout_interval_ns":"604800000000000","factory_id":null}'
 ```
 
 `owner_id` should be the DAO/Trezu account. If you deploy from another account and later
@@ -178,7 +181,7 @@ near view rbac-factory.testnet required_deploy_deposit
 near view rbac-factory.testnet code_hash
 ```
 
-Each child stores its own copy of the wasm, so the deposit is roughly **3.9 NEAR** and is not a
+Each child stores its own copy of the wasm, so the deposit is roughly **4.1 NEAR** and is not a
 fee: the factory forwards it to the child. A child deployed by the factory has no protocol-level
 access key and is therefore immutable. Clients should pin `code_hash()` (or set
 `PUBLIC_EXPECTED_CHILD_CODE_HASH` in the web app) so they deploy against code they reviewed. See
@@ -214,9 +217,12 @@ near call rbac.testnet set_role_owner \
   --accountId dao.testnet
 
 # Mint the role membership. The role must already be configured.
+# `mint_role` is payable: attach at least required_mint_deposit() (a storage reserve).
+near view rbac.testnet required_mint_deposit
 near call rbac.testnet mint_role \
   '{"account_id":"alice.testnet","role":"admin"}' \
-  --accountId hr.testnet
+  --accountId hr.testnet \
+  --deposit 0.011
 ```
 
 Read it back:
@@ -292,11 +298,13 @@ All amounts are `U128` and serialize as decimal strings. Timestamps are nanoseco
 
 | Method | Auth | Description |
 | --- | --- | --- |
-| `new(owner_id, salary_token, payout_interval_ns)` | init | Creates the contract. |
+| `new(owner_id, salary_token, payout_interval_ns, factory_id: Option<AccountId>)` | init | Creates the contract. The factory passes its own id so owner changes can be indexed. |
 | `owner_id() -> AccountId` | view | Current contract owner. |
 | `salary_token() -> AccountId` | view | NEP-141 token used for payouts. |
 | `payout_interval_ns() -> U64` | view | Global payout interval. |
-| `set_owner(new_owner_id)` | contract owner | Transfers contract ownership. |
+| `factory_id() -> Option<AccountId>` | view | Factory that deployed the contract, if any. |
+| `required_mint_deposit() -> U128` | view | Storage deposit required by `mint_role`. |
+| `set_owner(new_owner_id) -> PromiseOrValue<bool>` | contract owner | Transfers contract ownership and notifies the factory best-effort. |
 | `set_payout_config(salary_token, payout_interval_ns)` | contract owner | Changes the salary token and/or interval. |
 | `set_role_salary(role, salary) -> RoleView` | contract owner | Creates a role or updates its salary. |
 | `set_role_owner(role, owner: Option<AccountId>) -> RoleView` | contract owner or effective role owner | Delegates/clears role administration. `None` falls back to the contract owner. |
@@ -312,13 +320,13 @@ All amounts are `U128` and serialize as decimal strings. Timestamps are nanoseco
 
 | Method | Auth | Description |
 | --- | --- | --- |
-| `mint_role(account_id, role) -> String` | contract owner or role owner | Mints a membership; returns the decimal role id / token id. Starts salary accrual at the current block timestamp. |
-| `burn_role(account_id, role)` | contract owner or role owner | Burns a membership. Access stops immediately and unclaimed salary is discarded. |
+| `mint_role(account_id, role) -> String` | contract owner or role owner | Payable. Mints a membership; attach at least `required_mint_deposit()`. Returns the decimal role id / token id. Starts salary accrual at the current block timestamp. |
+| `burn_role(account_id, role, pay_pending: Option<bool>) -> PromiseOrValue<bool>` | contract owner or role owner | Burns a membership. Access stops immediately. By default accrued salary is paid first; pass `false` to forfeit it. A failed payout rolls the burn back. |
 | `has_role(account_id, role) -> bool` | view | Role-gated access check by name. |
 | `has_role_id(account_id, role_id: U64) -> bool` | view | Role-gated access check by id. |
 | `roles_of(account_id) -> Vec<String>` | view | Sorted role names held by an account. |
 | `role_ids_of(account_id) -> Vec<U64>` | view | Sorted role ids held by an account. |
-| `members_of(role) -> Vec<AccountId>` | view | Sorted members of a role. |
+| `members_of(role, from_index?, limit?) -> Vec<AccountId>` | view | Paginated members; default limit 50, maximum 100. |
 
 Rules:
 
@@ -342,7 +350,11 @@ Rules:
 | `claimable(account_id) -> U128` | view | Amount currently claimable. |
 | `claimable_role(account_id, role) -> U128` | view | Amount currently claimable for one role. |
 | `last_claim(account_id, role) -> Option<U64>` | view | Last claim timestamp for a role. |
+| `accrued_liabilities() -> U128` | view | Total accrued but unclaimed salary across roles. |
+| `accrued_liabilities_for_role(role) -> U128` | view | Accrued but unclaimed salary for one role. |
+| `withdraw_ft(token, receiver_id, amount)` | contract owner | Recovers any NEP-141 token, including accidental transfers. |
 | `on_claim_transfer(...) -> bool` | private callback | Restores claim timestamps if the NEP-141 transfer failed. |
+| `on_burn_transfer(...) -> bool` | private callback | Completes or rolls back a burn after its payout. |
 
 ### NEP-245
 
@@ -389,7 +401,13 @@ other than the member triggered the burn.
 - If nothing is due, `claim` returns `0` without creating a transfer.
 - Holders of the same role accrue independently: each membership has its own `(role_id, account)`
   claim timestamp, and claiming or burning one holder does not change another holder's schedule.
-- Burning a role discards its unclaimed salary. Claim first if that matters.
+- Minting starts accrual at the current block timestamp and requires `required_mint_deposit()`
+  in yoctoNEAR. The deposit is a non-refundable storage reserve.
+- Burning with the default `pay_pending` pays accrued salary to the member, then removes the
+  membership. If the payout fails, the membership and claim timestamp are restored so the burn
+  can be retried. Pass `pay_pending=false` to remove the role without paying.
+- `accrued_liabilities()` and `accrued_liabilities_for_role(role)` report what the contract owes
+  at the current block. Use them before `withdraw_ft` when recovering the salary token.
 - Changing a role salary or the global interval applies retroactively to all **unclaimed**
   elapsed time. Claim before reconfiguring payroll if that is not desired.
 - Payouts call `ft_transfer` on the salary token with `1 yoctoNEAR` attached and a 30 Tgas
@@ -460,22 +478,30 @@ The contract result is a JSON byte array in `result.result`; decode it with
    `new(code_base64)`, attaching enough deposit for storage. The code is immutable from then on.
 2. A user calls `deploy(name, owner_id, salary_token, payout_interval_ns)` with at least
    `required_deploy_deposit()` and enough gas (150 Tgas minimum; the web app sends 300).
-3. The factory creates the account, deploys the wasm, funds it, and calls `new`.
+3. The factory creates the account, deploys the wasm, funds it, and calls `new` with its own
+   account id as `factory_id`.
 4. A private callback records the child only after initialization succeeds and emits a
-   `rbac-factory` NEP-297 `deploy` event.
+   `rbac-factory` NEP-297 `deploy` event. On failure it refunds the registry reserve to the
+   deployer.
+5. The child's `set_owner` calls the factory's `on_owner_changed`, which updates
+   `ContractRecord.owner_id` and the `by_owner` index.
 
 There is no factory owner, no `set_code`, no `set_owner`, and no withdrawal method. Any deposit
 left in the factory is permanently locked; the factory only forwards the child's share on each
 deployment. `code_hash()` returns the SHA-256 of the stored wasm so clients can pin it.
 
-Registry views: `contract_count`, `get_contract`, `get_contracts`, `contracts_of_owner`, and
-`contracts_of_deployer`. `contracts_of_owner` uses the **deploy-time** owner; clients that need
-the current owner must query the child's `owner_id()`. The documented default testnet factory is
-`rbac-factory.testnet`.
+Registry views: `contract_count`, `get_contract`, `get_contracts`, and `contracts_of_owner`.
+`contracts_of_owner` tracks the child's current owner when `set_owner` notifies the factory.
+The notification is best-effort: if it fails, the child's live `owner_id()` remains
+authoritative and the factory index is stale, so clients must verify the child. The index is
+also spammable by deploying with a victim's account as the initial owner; treat it as an
+advisory discovery hint and hide unwanted entries with local favorites. `deployer_id` stays in
+the record for auditing. The documented default testnet factory is `rbac-factory.testnet`.
 
 Factory-deployed children have no protocol-level access key, so they cannot be upgraded or
-deleted. A failed initialization leaves an orphan account at the target id; retry with another
-name. The registry is append-only and does not track ownership transfers or deletion.
+deleted. A failed initialization leaves an orphan account at the target id and burns the
+forwarded child deposit; the factory refunds its registry reserve and records nothing. Retry
+with another name.
 
 ### Web app
 
@@ -484,15 +510,20 @@ wallet-selector. It has three views:
 
 | View | Behavior |
 | --- | --- |
-| **Deploy** | Shows factory status and the required deposit, validates the subaccount/owner/token/interval, and calls `deploy` through the connected wallet. |
+| **Deploy** | Shows factory status and the required deposit, validates the subaccount/owner/token/interval (30 days by default), and calls `deploy` through the connected wallet. |
 | **Owned contracts** | Scans the full registry, verifies each child's live `owner_id()`, filters by the scanned address, and supports local favorites to suppress spam. |
 | **My roles** | Scans the registry with `roles_of`, then reads role salary, `last_claim`, `claimable_role`, and renders a payout interval progress bar and claim button per membership. |
 
 Contract owners get role creation/salary, role-owner delegation, payroll configuration, and
-ownership transfer controls. Contract or role owners get mint/burn controls. All reads go
+ownership transfer controls. Every contract card also shows the treasury's current salary-token
+balance against `accrued_liabilities()`, marked funded or underfunded. Contract or role owners get
+mint/burn controls; minting attaches `required_mint_deposit()` and burning pays accrued salary
+first. Every write action shows a pending/disabled button and reports success or a wallet error
+in the status line. All reads go
 directly to NEAR JSON-RPC; no indexer is required. The registry is a discovery hint only: every
 displayed contract is re-checked on-chain, and favorites are scoped by network and account in
-`localStorage`.
+`localStorage`. Set `PUBLIC_SITE_URL` at build time to enable canonical and Open Graph/Twitter
+preview tags for the bundled `public/og.png` social card.
 
 ## Production: global contract by hash
 
@@ -501,15 +532,15 @@ use the global-by-hash path for this hackathon deployment is funding: deploying 
 contract burns roughly **38 NEAR** for the current wasm, and the testnet account used here does
 not have sufficient testnet NEAR for that. The local path only stakes a per-child deposit, which
 is forwarded to the child. It is also simple and keeps each child independent. The trade-off is
-storage: every child stores its own copy of the ~0.38 MiB rbac-nft wasm, so each deployment costs
-roughly 3.9 NEAR.
+storage: every child stores its own copy of the ~0.39 MiB rbac-nft wasm, so each deployment costs
+roughly 4.1 NEAR.
 
 The production path is a **global contract stored by hash** (NEP-591). A global contract is
 deployed once to the network and identified by its SHA-256 hash, and accounts can use it without
 storing another copy:
 
 - Deploy the reviewed rbac-nft wasm once as a global contract. The protocol burns the storage
-  cost of the code (roughly **~38 NEAR for 385 KiB** at 10× the normal storage byte cost) instead
+  cost of the code (roughly **~38 NEAR** at 10× the normal storage byte cost) instead
   of staking it.
 - The factory deploys each child with `DeployGlobalContractByHash` / a global-contract use
   action (depending on the SDK helper) and then calls the child's `new`. The child's account
@@ -627,7 +658,9 @@ main fields are:
 | `id_token_ttl_secs` | `900` | ID-token lifetime. |
 | `authorization_code_ttl_secs` | `300` | One-time code lifetime. |
 | `pending_login_ttl_secs` | `300` | Login page / challenge lifetime. |
-| `signing_key_path` | unset | PKCS#8 PEM RSA key. If unset, an ephemeral key is generated. |
+| `signing_key_path` | unset | PKCS#8 PEM RSA key. If unset, an ephemeral key is generated. Use a persistent key in production. |
+| `max_pending_logins` | `10000` | Live pending-login cap; `/authorize` returns HTTP 429 when full. |
+| `store_sweep_interval_secs` | `60` | Background interval for pruning expired logins, codes, and sessions. |
 | `verify_access_key` | `true` | Require the NEP-413 key to be an access key of the account. |
 | `allowed_scopes` | `openid profile roles` | Global scope allow-list. |
 
@@ -648,9 +681,11 @@ cargo run -p rbac-oidc --release -- services/oidc/config.toml
 ```
 
 `RBAC_OIDC_CONFIG` can also point at the config file. Put the service behind a TLS reverse
-proxy so the configured `issuer` is reachable over HTTPS. The included
-[`Dockerfile`](services/oidc/Dockerfile) builds a non-root runtime image from the repository
-root:
+proxy so the configured `issuer` is reachable over HTTPS, and add request rate limiting for
+`/login`, `/authorize`, `/token`, and `/introspect` at that proxy. The pending-login cap and
+expired-entry sweeper bound memory use, but per-IP throttling is deliberately left to the proxy.
+The included [`Dockerfile`](services/oidc/Dockerfile) builds a non-root runtime image from the
+repository root:
 
 ```bash
 docker build -f services/oidc/Dockerfile -t rbac-oidc .
@@ -686,6 +721,8 @@ See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed ser
   `PUBLIC_EXPECTED_CHILD_CODE_HASH` and refuses to deploy on a mismatch.
 - The registry is not an ownership oracle. The web app verifies `owner_id()` on the child before
   showing a contract as owned and never grants UI permissions from registry data alone.
+  `contracts_of_owner` is best-effort and can be spammed by deploying with a victim's account as
+  the initial owner.
 - Wallet writes are signed by the user's wallet; the app never handles private keys.
 - Favorites are stored locally and only filter display. They do not affect on-chain state.
 - RPC read results are trusted, as with any dApp. Use a reputable endpoint.
@@ -717,8 +754,12 @@ See [`services/oidc/README.md`](services/oidc/README.md) for a more detailed ser
   `roles_of` and `view_access_key` answers. Use a dedicated/redundant RPC provider for
   production.
 - Back up the signing key. Without it, all issued tokens become unverifiable after a restart.
+  Always configure a persistent `signing_key_path` in production.
 - Run a single OIDC replica with the in-memory store, or add a shared persistent store before
-  scaling horizontally.
+  scaling horizontally. Expired entries are swept periodically and live pending logins are
+  capped, but the store is still process-local.
+- Add per-IP rate limiting at the reverse proxy. The service returns 429 when the pending-login
+  store is full, but it does not throttle individual clients.
 
 ## Limitations
 
@@ -734,7 +775,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
   `claim` gas and response size.
 - Roles cannot be renamed or deleted. Salary/interval changes are retroactive to unclaimed
   time.
-- Burning a role forfeits its unclaimed salary.
+- Burning pays accrued salary by default. If that FT transfer fails the membership stays; an
+  owner can opt out with `pay_pending=false` to remove it without paying.
 - Salary payouts depend on the token contract and the contract's balance. There is no
   retry queue; a failed transfer restores timestamps only if the callback executes and can
   read the result.
@@ -748,16 +790,19 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 **Factory and web app**
 
 - A failed child `new` call leaves an uninitialized account. The factory cannot delete it and
-  cannot retry the same name.
+  cannot retry the same name; it refunds the registry reserve, but the forwarded child deposit is
+  burned.
 - Children deployed through the factory are immutable because they have no access keys. Plan
   for upgrades before using it for a long-lived production contract.
 - Every child stores a full copy of the wasm, so deployment is storage-heavy. The required
-  deposit is roughly 3.9 NEAR at current prices. The documented global-by-hash upgrade removes
+  deposit is roughly 4.1 NEAR at current prices. The documented global-by-hash upgrade removes
   this per-child cost, but it was not used here because deploying the global contract burns
   roughly 38 NEAR and the testnet account lacks sufficient testnet NEAR.
 - Any deposit left in the immutable factory after a deployment is permanently locked because
   there is no withdrawal method.
-- The registry is append-only and does not track ownership changes or deletion.
+- Owner changes are indexed only when the child can notify the factory. The notification is
+  best-effort; the registry can be stale, and deletion is not tracked. `by_owner` can also be
+  spammed, so verify the child's live `owner_id()`.
 - The web app scans the whole registry and makes one or more RPC reads per child. This is fine
   for small registries but grows linearly; an indexer is the next step for scale.
 - Reads have a 20-second timeout. A failed child read is treated as not-owned/no-roles for that
@@ -769,8 +814,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 **OIDC**
 
 - The pending-login/code/session store is process-local and in-memory. Restarting loses
-  sessions; multiple replicas do not share state. Expired entries are not proactively
-  garbage-collected, so abandoned logins and old sessions remain in memory until restart.
+  sessions; multiple replicas do not share state. Expired entries are pruned by a periodic
+  sweeper and pending logins are capped, but the store remains memory-bound per process.
 - No refresh tokens, dynamic client registration, consent screen, device flow, token
   exchange, DPoP, or CORS.
 - One RSA signing key, loaded at startup. There is no key rotation endpoint or multi-key
@@ -785,7 +830,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
   redirect URI. `/token` and `/login` follow the JSON error style.
 - The built-in login page relies on a NEP-413 wallet (`window.nearWallet` or wallet-selector)
   or manual signature entry. It is a developer-friendly login, not a polished consent UI.
-- No rate limiting, audit logging, or brute-force protection is built in.
+- No per-IP rate limiting, audit logging, or brute-force protection is built in. Rate-limit
+  `/login`, `/authorize`, `/token`, and `/introspect` at the reverse proxy.
 - `verify_access_key=false` is unsafe outside local experiments; it removes the binding
   between the signing key and the claimed account.
 
@@ -795,27 +841,41 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 cargo test --workspace
 ```
 
-The Rust workspace currently has **148 tests**, and the web app has **32 Vitest tests**
-(**180 total**):
+The Rust workspace currently has **170 tests**, the web app has **36 Vitest tests**, and there
+are **5 Docker-gated sandbox tests** (**211 total** when the sandbox job runs):
 
 - `crates/rbac-common`: 6 tests covering role hashing, token-id encoding, documented vectors,
   and role-name validation.
-- `contracts/rbac-nft`: 79 tests covering initialization/admin permissions, role creation,
-  delegation, mint/burn, membership queries, NEP-245 reads/enumeration/metadata, salary
-  accrual, partial intervals, independent holder claims, claim callbacks, and the
-  non-transferable entry points.
-- `contracts/rbac-factory`: 17 tests covering immutable initialization and code hashing, name
-  and gas/deposit validation, child creation receipts, callback registration/failure, duplicate
-  protection, and registry pagination/indexes.
-- `services/oidc`: 32 unit tests covering config validation (including the example config),
-  RSA/JWKS, NEP-413 serialization and signatures, role-result decoding, and handler helpers.
-- `services/oidc/tests/oidc_flow.rs`: 14 end-to-end HTTP tests covering discovery, JWKS,
+- `contracts/rbac-nft`: 92 tests covering initialization/admin permissions, role creation,
+  delegation, mint/burn, pagination, holder indexes, NEP-245 reads/enumeration/metadata, salary
+  accrual, partial intervals, independent holder claims, burn payouts and rollbacks, arbitrary
+  token withdrawal, liabilities, factory owner sync, and the non-transferable entry points.
+- `contracts/rbac-factory`: 20 tests covering immutable initialization and code hashing, name
+  and gas/deposit validation, child creation receipts, callback registration/failure/refund,
+  duplicate protection, owner-index updates, and registry pagination/indexes.
+- `services/oidc`: 37 unit tests covering config validation (including the example config),
+  RSA/JWKS, NEP-413 serialization and signatures, role-result decoding, store pruning/caps, and
+  handler helpers.
+- `services/oidc/tests/oidc_flow.rs`: 15 end-to-end HTTP tests covering discovery, JWKS,
   full PKCE authorization-code flow, code binding/reuse/expiry, confidential clients,
   login signature/access-key checks, required roles, live role revocation, logout,
-  introspection, and client binding for introspection.
-- `services/web/tests`: 32 Vitest tests covering role-id vectors and token ids, account and
-  subaccount validation, amount/duration formatting and parsing, interval progress, favorites
-  scoping/persistence, bounded-concurrency mapping, and role/contract permission helpers.
+  introspection, introspection client binding, and the pending-login 429 response.
+- `services/web/tests`: 36 Vitest tests covering role-id vectors and token ids, account and
+  subaccount validation, amount/duration formatting and parsing, payout-interval defaults,
+  interval progress, favorites scoping/persistence, bounded-concurrency mapping, and
+  role/contract permission helpers.
+- `contracts/*/tests/sandbox.rs`: 5 tests against a real NEAR sandbox (Docker) covering FT claim
+  and burn payouts, failed-payout rollback, arbitrary-token withdrawal/liabilities, factory
+  deploy + registry + owner sync, and failed child initialization with a reserve refund.
+
+Sandbox tests are opt-in because they need Docker and prebuilt wasm:
+
+```bash
+./scripts/build-contract.sh
+cargo test -p rbac-nft -p rbac-factory --features sandbox --test sandbox
+```
+
+CI runs them in a separate `sandbox` job after building the wasm.
 
 Lint and wasm checks:
 

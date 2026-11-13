@@ -158,7 +158,11 @@ async fn authorize(
         created_at: now,
         expires_at: now + state.config.pending_login_ttl_secs,
     };
-    state.store.insert_pending(pending.clone()).await;
+    if !state.store.insert_pending(pending.clone()).await {
+        return Err(AppError::too_many_requests(
+            "too many pending login requests; retry later",
+        ));
+    }
 
     Ok(Html(html::login_page(&state.config, client, &pending)).into_response())
 }
@@ -777,6 +781,8 @@ mod tests {
             id_token_ttl_secs: 1,
             authorization_code_ttl_secs: 1,
             pending_login_ttl_secs: 1,
+            max_pending_logins: 10_000,
+            store_sweep_interval_secs: 60,
             signing_key_path: None,
             verify_access_key: true,
             allowed_scopes: vec!["openid".to_owned(), "profile".to_owned()],

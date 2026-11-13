@@ -30,8 +30,12 @@ export function loadConfig(): AppConfig {
       /\/+$/,
       "",
     ),
+    siteUrl: (env.PUBLIC_SITE_URL?.trim() || "").replace(/\/+$/, ""),
   };
 }
+
+/** 30 days in nanoseconds: the default deploy payout interval. */
+export const DEFAULT_PAYOUT_INTERVAL_NS = 2_592_000_000_000_000n;
 
 export const WRITE_GAS = 100_000_000_000_000n;
 export const CLAIM_GAS = 100_000_000_000_000n;

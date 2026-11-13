@@ -2,7 +2,7 @@
 
 use near_sdk::json_types::{U128, U64};
 use near_sdk::test_utils::get_logs;
-use near_sdk::NearToken;
+use near_sdk::{NearToken, PromiseOrValue};
 use rbac_common::{role_id, token_id};
 
 use super::helpers::*;
@@ -21,7 +21,7 @@ fn initializes_configuration() {
 #[should_panic(expected = "payout interval must be positive")]
 fn rejects_zero_payout_interval() {
     set_env(owner(), 0);
-    Contract::new(owner(), salary_token(), U64(0));
+    Contract::new(owner(), salary_token(), U64(0), None);
 }
 
 #[test]
@@ -29,10 +29,10 @@ fn owner_can_transfer_ownership() {
     let mut contract = new_contract();
     let new_owner = account("new-dao.test.near");
 
-    call_as(OWNER_ID, 0, || contract.set_owner(new_owner.clone()));
+    let _ = call_as(OWNER_ID, 0, || contract.set_owner(new_owner.clone()));
     assert_eq!(contract.owner_id(), new_owner);
 
-    call_as("new-dao.test.near", 0, || {
+    let _ = call_as("new-dao.test.near", 0, || {
         contract.set_owner(account("another-dao.test.near"))
     });
     assert_eq!(contract.owner_id(), account("another-dao.test.near"));
@@ -42,7 +42,7 @@ fn owner_can_transfer_ownership() {
 #[should_panic(expected = "only the contract owner")]
 fn non_owner_cannot_transfer_ownership() {
     let mut contract = new_contract();
-    call_as("mallory.test.near", 0, || {
+    let _ = call_as("mallory.test.near", 0, || {
         contract.set_owner(account("mallory.test.near"))
     });
 }
@@ -223,7 +223,10 @@ fn mint_role_creates_membership() {
     assert!(contract.has_role(user(), "admin".to_owned()));
     assert!(contract.has_role_id(user(), U64(role_id("admin"))));
     assert!(!contract.has_role(account("bob.test.near"), "admin".to_owned()));
-    assert_eq!(contract.members_of("admin".to_owned()), vec![user()]);
+    assert_eq!(
+        contract.members_of("admin".to_owned(), None, None),
+        vec![user()]
+    );
     assert_eq!(contract.roles_of(user()), vec!["admin".to_owned()]);
     assert_eq!(contract.role_ids_of(user()), vec![U64(role_id("admin"))]);
     assert_eq!(contract.get_role("admin".to_owned()).unwrap().holders, 1);
@@ -246,8 +249,8 @@ fn role_owner_can_mint_and_burn() {
     });
     assert!(contract.has_role(user(), "admin".to_owned()));
 
-    call_as("hr.test.near", 0, || {
-        contract.burn_role(user(), "admin".to_owned())
+    let _ = call_as("hr.test.near", 0, || {
+        contract.burn_role(user(), "admin".to_owned(), None)
     });
     assert!(!contract.has_role(user(), "admin".to_owned()));
 }
@@ -317,12 +320,14 @@ fn burn_role_removes_membership_and_views() {
     contract.mint_role(user(), "admin".to_owned());
 
     set_env(owner(), 0);
-    contract.burn_role(user(), "admin".to_owned());
+    let _ = contract.burn_role(user(), "admin".to_owned(), None);
 
     assert!(!contract.has_role(user(), "admin".to_owned()));
     assert!(contract.roles_of(user()).is_empty());
     assert!(contract.role_ids_of(user()).is_empty());
-    assert!(contract.members_of("admin".to_owned()).is_empty());
+    assert!(contract
+        .members_of("admin".to_owned(), None, None)
+        .is_empty());
     assert_eq!(contract.last_claim(user(), "admin".to_owned()), None);
     assert_eq!(contract.get_role("admin".to_owned()).unwrap().holders, 0);
     assert_eq!(contract.role_count(), 1, "configuration is retained");
@@ -333,8 +338,8 @@ fn burn_role_removes_membership_and_views() {
 fn cannot_burn_role_the_account_does_not_hold() {
     let mut contract = new_contract();
     create_role(&mut contract, "admin", 0);
-    call_as(OWNER_ID, 0, || {
-        contract.burn_role(user(), "admin".to_owned())
+    let _ = call_as(OWNER_ID, 0, || {
+        contract.burn_role(user(), "admin".to_owned(), None)
     });
 }
 
@@ -342,8 +347,8 @@ fn cannot_burn_role_the_account_does_not_hold() {
 #[should_panic(expected = "role is not configured")]
 fn cannot_burn_unconfigured_role() {
     let mut contract = new_contract();
-    call_as(OWNER_ID, 0, || {
-        contract.burn_role(user(), "admin".to_owned())
+    let _ = call_as(OWNER_ID, 0, || {
+        contract.burn_role(user(), "admin".to_owned(), None)
     });
 }
 
@@ -352,8 +357,8 @@ fn cannot_burn_unconfigured_role() {
 fn unrelated_account_cannot_burn() {
     let mut contract = new_contract();
     grant_role(&mut contract, "alice.test.near", "admin", 0, 0);
-    call_as("mallory.test.near", 0, || {
-        contract.burn_role(user(), "admin".to_owned())
+    let _ = call_as("mallory.test.near", 0, || {
+        contract.burn_role(user(), "admin".to_owned(), None)
     });
 }
 
@@ -377,11 +382,13 @@ fn roles_of_and_members_of_are_sorted_and_deduplicated() {
         ids.into_iter().map(U64).collect::<Vec<_>>()
     });
     assert_eq!(
-        contract.members_of("zeta".to_owned()),
+        contract.members_of("zeta".to_owned(), None, None),
         vec![user(), account("bob.test.near")]
     );
     assert!(contract.roles_of(account("nobody.test.near")).is_empty());
-    assert!(contract.members_of("unknown".to_owned()).is_empty());
+    assert!(contract
+        .members_of("unknown".to_owned(), None, None)
+        .is_empty());
 }
 
 #[test]
@@ -453,7 +460,7 @@ fn mint_and_burn_emit_nep_297_events() {
     assert_eq!(json["data"][0]["amounts"][0], "1");
 
     set_env(owner(), 0);
-    contract.burn_role(user(), "admin".to_owned());
+    let _ = contract.burn_role(user(), "admin".to_owned(), None);
     let logs = get_logs();
     let burn = logs
         .iter()
@@ -475,8 +482,8 @@ fn burn_event_records_the_authorized_caller() {
     create_role(&mut contract, "admin", 0);
     set_env(owner(), 0);
     contract.mint_role(user(), "admin".to_owned());
-    call_as(OWNER_ID, 0, || {
-        contract.burn_role(user(), "admin".to_owned())
+    let _ = call_as(OWNER_ID, 0, || {
+        contract.burn_role(user(), "admin".to_owned(), None)
     });
 
     let logs = get_logs();
@@ -493,20 +500,90 @@ fn burn_event_records_the_authorized_caller() {
 }
 
 #[test]
-fn mint_ignores_attached_deposit() {
-    // Minting is intentionally not payable; attaching a deposit is not required. This test
-    // documents that attached NEAR is ignored rather than refunded by the contract.
+fn mint_requires_the_storage_deposit() {
     let mut contract = new_contract();
     create_role(&mut contract, "admin", 0);
-    set_env(owner(), 0);
-    let mut builder = near_sdk::test_utils::VMContextBuilder::new();
-    let context = builder
-        .current_account_id(contract_id())
-        .predecessor_account_id(owner())
-        .attached_deposit(NearToken::from_yoctonear(1))
-        .build();
-    near_sdk::testing_env!(context);
+    let required = contract.required_mint_deposit().0;
 
+    set_env_with_deposit(OWNER_ID, 0, NearToken::from_yoctonear(required - 1));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        contract.mint_role(user(), "admin".to_owned());
+    }));
+    assert!(result.is_err(), "minting below the reserve should fail");
+
+    set_env_with_deposit(OWNER_ID, 0, NearToken::from_yoctonear(required));
     contract.mint_role(user(), "admin".to_owned());
     assert!(contract.has_role(user(), "admin".to_owned()));
+}
+
+#[test]
+fn members_are_paginated_and_swap_removal_keeps_the_set_consistent() {
+    let mut contract = new_contract();
+    create_role(&mut contract, "admin", 0);
+    let bob = account("bob.test.near");
+    let carol = account("carol.test.near");
+    set_env(owner(), 0);
+    contract.mint_role(user(), "admin".to_owned());
+    contract.mint_role(bob.clone(), "admin".to_owned());
+    contract.mint_role(carol.clone(), "admin".to_owned());
+
+    assert_eq!(
+        contract.members_of("admin".to_owned(), None, None),
+        vec![user(), bob.clone(), carol.clone()]
+    );
+    assert_eq!(
+        contract.members_of("admin".to_owned(), Some(U128(1)), Some(1)),
+        vec![bob.clone()]
+    );
+    assert!(contract
+        .members_of("admin".to_owned(), Some(U128(99)), None)
+        .is_empty());
+
+    set_env(owner(), 0);
+    let _ = contract.burn_role(bob, "admin".to_owned(), Some(false));
+    assert_eq!(
+        contract.members_of("admin".to_owned(), None, None),
+        vec![user(), carol]
+    );
+    assert_eq!(contract.get_role("admin".to_owned()).unwrap().holders, 2);
+}
+
+#[test]
+fn factory_deployed_contract_notifies_the_factory_on_owner_change() {
+    let factory = account("factory.test.near");
+    let mut contract = new_contract_with_factory(Some(factory.clone()));
+    assert_eq!(contract.factory_id(), Some(factory.clone()));
+
+    let new_owner = account("new-dao.test.near");
+    set_env(owner(), 0);
+    match contract.set_owner(new_owner.clone()) {
+        PromiseOrValue::Promise(_) => {}
+        PromiseOrValue::Value(_) => panic!("expected a factory notification"),
+    }
+
+    let receipts = get_receipts();
+    let receipt = receipts
+        .iter()
+        .find(|receipt| receipt.receiver_id == factory)
+        .expect("factory notification receipt");
+    assert_eq!(
+        receipt_methods(receipt),
+        vec!["on_owner_changed".to_owned()]
+    );
+    let (_, args) = receipt_function_call(receipt).unwrap();
+    let args: serde_json::Value = serde_json::from_slice(&args).unwrap();
+    assert_eq!(args["new_owner_id"], new_owner.to_string());
+}
+
+#[test]
+fn directly_deployed_contract_updates_ownership_without_a_factory_call() {
+    let mut contract = new_contract();
+    let new_owner = account("new-dao.test.near");
+    set_env(owner(), 0);
+    match contract.set_owner(new_owner.clone()) {
+        PromiseOrValue::Value(ok) => assert!(ok),
+        PromiseOrValue::Promise(_) => panic!("direct deployments have no factory to notify"),
+    }
+    assert_eq!(contract.owner_id(), new_owner);
+    assert!(get_receipts().is_empty());
 }

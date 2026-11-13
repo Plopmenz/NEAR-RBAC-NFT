@@ -7,7 +7,7 @@
 #
 # The factory has no owner and no way to replace the child code after this call. If the account
 # already exists this script stops instead of risking a mixed or unexpected deployment. The init
-# deposit (default 5 NEAR) covers the stored wasm (~3.9 NEAR); anything left over is permanently
+# deposit (default 5 NEAR) covers the stored wasm (~4.1 NEAR); anything left over is permanently
 # locked because the factory has no withdrawal method.
 set -euo pipefail
 

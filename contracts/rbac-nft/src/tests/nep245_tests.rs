@@ -133,7 +133,7 @@ fn burning_the_last_holder_keeps_the_token_type() {
     grant_role(&mut contract, "alice.test.near", "employee", 0, 0);
 
     set_env(owner(), 0);
-    contract.burn_role(user(), "admin".to_owned());
+    let _ = contract.burn_role(user(), "admin".to_owned(), None);
 
     let tokens = contract.mt_tokens(None, None);
     assert_eq!(tokens.len(), 2, "role configuration is retained");

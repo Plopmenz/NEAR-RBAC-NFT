@@ -24,12 +24,13 @@ impl AppState {
         roles: Arc<dyn RoleSource>,
         clock: Arc<dyn Clock>,
     ) -> Self {
+        let store = Arc::new(Store::with_max_pending(config.max_pending_logins));
         Self {
             config: Arc::new(config),
             keys,
             roles,
             clock,
-            store: Arc::new(Store::new()),
+            store,
         }
     }
 }

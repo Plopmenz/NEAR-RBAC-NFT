@@ -54,6 +54,24 @@ jobs:
             res/rbac_factory.wasm
           if-no-files-found: error
 
+  sandbox:
+    name: Sandbox integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build wasm artifacts
+        run: ./scripts/build-contract.sh
+
+      - name: Sandbox tests
+        run: cargo test -p rbac-nft -p rbac-factory --features sandbox --test sandbox
+
   web:
     name: Web test, check, build
     runs-on: ubuntu-latest

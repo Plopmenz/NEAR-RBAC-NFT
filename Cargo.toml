@@ -5,6 +5,7 @@ members = [
     "contracts/rbac-nft",
     "contracts/rbac-factory",
     "services/oidc",
+    "test-contracts/mock-ft",
 ]
 
 [workspace.package]

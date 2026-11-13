@@ -39,6 +39,13 @@ id_token_ttl_secs = 900
 authorization_code_ttl_secs = 300
 pending_login_ttl_secs = 300
 
+# Maximum number of live pending logins. `/authorize` is unauthenticated, so
+# this caps memory use and returns 429 when the limit is reached.
+max_pending_logins = 10000
+
+# How often expired pending logins, authorization codes and sessions are swept.
+store_sweep_interval_secs = 60
+
 # Verify that the public key that signed the NEP-413 message is an access key
 # of the claimed account. Keep this enabled outside throwaway experiments.
 verify_access_key = true

@@ -67,6 +67,14 @@ impl AppError {
         )
     }
 
+    pub fn too_many_requests(description: impl Into<String>) -> Self {
+        Self::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "temporarily_unavailable",
+            description,
+        )
+    }
+
     pub fn status(&self) -> StatusCode {
         self.status
     }

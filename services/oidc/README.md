@@ -57,6 +57,8 @@ Copy [`config.example.toml`](config.example.toml) to `config.toml` (git-ignored)
 | `authorization_code_ttl_secs` | `300` | One-time code lifetime. |
 | `pending_login_ttl_secs` | `300` | Login challenge lifetime. |
 | `signing_key_path` | unset | PKCS#8 PEM RSA private key. Omit to generate an ephemeral key. |
+| `max_pending_logins` | `10000` | Maximum number of live pending-login challenges. New logins get HTTP 429 when full. |
+| `store_sweep_interval_secs` | `60` | How often a background task prunes expired pending logins, codes and sessions. |
 | `verify_access_key` | `true` | Require the NEP-413 key to be an access key of the account. |
 | `allowed_scopes` | `["openid","profile","roles"]` | Must contain `openid`. |
 
@@ -93,11 +95,17 @@ chmod 600 services/oidc/signing-key.pem
 ```
 
 Set `signing_key_path` in the config. If it is omitted, the service logs a warning and
-generates an ephemeral key; every restart invalidates all issued tokens.
+generates an ephemeral key; every restart invalidates all issued tokens. In production always
+use a persistent key file (mounted as a secret) and back it up.
 
 Put the service behind a TLS reverse proxy (Caddy, nginx, a cloud load balancer) whose public
 hostname matches `issuer`. Do not terminate TLS with a different public URL: `iss`, discovery
 URLs, and the NEP-413 recipient are all derived from `issuer`.
+
+Also add rate limiting at the reverse proxy for `/login`, `/authorize`, `/token` and
+`/introspect`. The service caps the number of live pending logins (`max_pending_logins`) and
+returns HTTP 429 with `error=temporarily_unavailable` when it is full, but it does not implement
+per-IP request throttling itself.
 
 ## Docker
 
@@ -189,8 +197,9 @@ ID token: the same identity fields plus `auth_time`, `sid`, optional `nonce`,
   claimed account. Turning it off lets anyone claim any account id.
 - The RPC endpoint is trusted for role and access-key answers. Use a reliable provider.
 - The store is in-memory: run one replica, or add a shared persistent store before scaling.
-  Expired entries are not proactively garbage-collected; abandoned logins and old sessions
-  remain until process restart.
+  A background sweeper prunes expired pending logins, authorization codes and sessions every
+  `store_sweep_interval_secs`. Pending logins are capped at `max_pending_logins`; when full,
+  `/authorize` returns HTTP 429 instead of growing memory without bound.
 - There are no refresh tokens. Clients re-run the authorization-code flow when the access
   token expires.
 - `/userinfo` and `/introspect` see role changes immediately and revoke the session if a
@@ -200,7 +209,8 @@ ID token: the same identity fields plus `auth_time`, `sid`, optional `nonce`,
   confidential clients require matching client credentials. Protect the endpoint at the
   network layer if you need stronger isolation.
 - Keep the signing key secret and backed up. There is one key; rotation is manual.
-- No rate limiting, consent UI, dynamic client registration, or audit logging is included.
+- No per-IP rate limiting, consent UI, dynamic client registration, or audit logging is included.
+  Add request rate limiting at the reverse proxy.
 
 ## Tests
 

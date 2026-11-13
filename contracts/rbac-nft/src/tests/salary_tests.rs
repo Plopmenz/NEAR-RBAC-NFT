@@ -225,7 +225,7 @@ fn burn_forfeits_unclaimed_salary_and_stops_accrual() {
     assert_eq!(contract.claimable(user()), U128(500));
 
     set_env(owner(), 5 * INTERVAL_NS);
-    contract.burn_role(user(), "employee".to_owned());
+    let _ = contract.burn_role(user(), "employee".to_owned(), Some(false));
 
     set_env(user(), 5 * INTERVAL_NS);
     assert_eq!(contract.claimable(user()), U128(0));
@@ -307,7 +307,7 @@ fn claim_callback_skips_roles_burned_while_the_transfer_was_in_flight() {
     expect_promise(contract.claim(user()));
 
     set_env(owner(), 2 * INTERVAL_NS);
-    contract.burn_role(user(), "employee".to_owned());
+    let _ = contract.burn_role(user(), "employee".to_owned(), Some(false));
 
     set_env_with_results(contract_id(), 2 * INTERVAL_NS, vec![PromiseResult::Failed]);
     let ok = contract.on_claim_transfer(user(), vec![(role_id("employee"), 0)], U128(200));
@@ -389,7 +389,7 @@ fn burning_one_holder_does_not_affect_other_holders() {
     contract.mint_role(account("bob.test.near"), "employee".to_owned());
 
     set_env(owner(), 2 * INTERVAL_NS);
-    contract.burn_role(user(), "employee".to_owned());
+    let _ = contract.burn_role(user(), "employee".to_owned(), Some(false));
 
     set_env(owner(), 2 * INTERVAL_NS);
     assert_eq!(contract.claimable(user()), U128(0));
@@ -399,7 +399,7 @@ fn burning_one_holder_does_not_affect_other_holders() {
         "the remaining holder keeps accruing"
     );
     assert_eq!(
-        contract.members_of("employee".to_owned()),
+        contract.members_of("employee".to_owned(), None, None),
         vec![account("bob.test.near")]
     );
     assert_eq!(contract.get_role("employee".to_owned()).unwrap().holders, 1);
@@ -424,4 +424,198 @@ fn anyone_can_trigger_a_claim_but_payment_goes_to_the_member() {
     let (_, args) = receipt_function_call(&receipts[0]).unwrap();
     let args: serde_json::Value = serde_json::from_slice(&args).unwrap();
     assert_eq!(args["receiver_id"], user().to_string());
+}
+
+#[test]
+fn burn_pays_pending_salary_by_default() {
+    let mut contract = setup(100);
+    set_env(owner(), 5 * INTERVAL_NS);
+
+    match contract.burn_role(user(), "employee".to_owned(), None) {
+        PromiseOrValue::Promise(_) => {}
+        PromiseOrValue::Value(_) => panic!("expected a salary transfer"),
+    }
+    assert!(
+        contract.has_role(user(), "employee".to_owned()),
+        "membership remains until the payout succeeds"
+    );
+    assert_eq!(
+        contract.last_claim(user(), "employee".to_owned()),
+        Some(U64(5 * INTERVAL_NS)),
+        "the timestamp advances so the member cannot double-claim"
+    );
+
+    let receipts = get_receipts();
+    let (_, args) = receipt_function_call(&receipts[0]).unwrap();
+    let args: serde_json::Value = serde_json::from_slice(&args).unwrap();
+    assert_eq!(args["receiver_id"], user().to_string());
+    assert_eq!(args["amount"].as_str().unwrap(), "500");
+    assert_eq!(
+        receipt_methods(&receipts[1]),
+        vec!["on_burn_transfer".to_owned()]
+    );
+
+    set_env_with_results(
+        contract_id(),
+        5 * INTERVAL_NS,
+        vec![PromiseResult::Successful(Vec::new())],
+    );
+    assert!(contract.on_burn_transfer(
+        user(),
+        U64(role_id("employee")),
+        U64(0),
+        U128(500),
+        Some(owner()),
+    ));
+    assert!(!contract.has_role(user(), "employee".to_owned()));
+    assert_eq!(contract.last_claim(user(), "employee".to_owned()), None);
+    assert!(contract
+        .members_of("employee".to_owned(), None, None)
+        .is_empty());
+}
+
+#[test]
+fn failed_burn_payout_keeps_membership_and_restores_the_timestamp() {
+    let mut contract = setup(100);
+    set_env(owner(), 5 * INTERVAL_NS);
+    match contract.burn_role(user(), "employee".to_owned(), None) {
+        PromiseOrValue::Promise(_) => {}
+        PromiseOrValue::Value(_) => panic!("expected a salary transfer"),
+    }
+
+    set_env_with_results(contract_id(), 5 * INTERVAL_NS, vec![PromiseResult::Failed]);
+    assert!(!contract.on_burn_transfer(
+        user(),
+        U64(role_id("employee")),
+        U64(0),
+        U128(500),
+        Some(owner()),
+    ));
+    assert!(contract.has_role(user(), "employee".to_owned()));
+    assert_eq!(
+        contract.last_claim(user(), "employee".to_owned()),
+        Some(U64(0))
+    );
+    set_env(user(), 5 * INTERVAL_NS);
+    assert_eq!(contract.claimable(user()), U128(500));
+}
+
+#[test]
+fn burn_can_explicitly_forfeit_pending_salary() {
+    let mut contract = setup(100);
+    set_env(owner(), 5 * INTERVAL_NS);
+    match contract.burn_role(user(), "employee".to_owned(), Some(false)) {
+        PromiseOrValue::Value(ok) => assert!(ok),
+        PromiseOrValue::Promise(_) => panic!("forfeiting should not create a transfer"),
+    }
+    assert!(!contract.has_role(user(), "employee".to_owned()));
+    assert!(get_receipts().is_empty());
+}
+
+#[test]
+fn burning_without_pending_salary_removes_the_role_immediately() {
+    let mut contract = setup(100);
+    set_env(owner(), INTERVAL_NS - 1);
+    match contract.burn_role(user(), "employee".to_owned(), None) {
+        PromiseOrValue::Value(ok) => assert!(ok),
+        PromiseOrValue::Promise(_) => panic!("nothing is due yet"),
+    }
+    assert!(!contract.has_role(user(), "employee".to_owned()));
+}
+
+#[test]
+fn liability_views_sum_accrued_salary_for_all_holders() {
+    let mut contract = new_contract();
+    grant_role(&mut contract, "alice.test.near", "admin", 100, 0);
+    grant_role(&mut contract, "alice.test.near", "employee", 50, 0);
+    grant_role(&mut contract, "bob.test.near", "employee", 50, 0);
+
+    set_env(owner(), 3 * INTERVAL_NS);
+    assert_eq!(
+        contract.accrued_liabilities_for_role("admin".to_owned()),
+        U128(300)
+    );
+    assert_eq!(
+        contract.accrued_liabilities_for_role("employee".to_owned()),
+        U128(300),
+        "both holders accrue independently"
+    );
+    assert_eq!(contract.accrued_liabilities(), U128(600));
+    assert_eq!(
+        contract.accrued_liabilities_for_role("unknown".to_owned()),
+        U128(0)
+    );
+}
+
+#[test]
+fn claim_reduces_accrued_liabilities() {
+    let mut contract = setup(100);
+    set_env(user(), 4 * INTERVAL_NS);
+    assert_eq!(contract.accrued_liabilities(), U128(400));
+    expect_promise(contract.claim(user()));
+
+    set_env(user(), 4 * INTERVAL_NS);
+    assert_eq!(contract.accrued_liabilities(), U128(0));
+}
+
+#[test]
+fn owner_can_withdraw_from_any_token() {
+    let mut contract = new_contract();
+    let token = account("stranded.test.near");
+    let receiver = account("treasury.test.near");
+
+    set_env_with_deposit(OWNER_ID, 0, near_sdk::NearToken::from_yoctonear(1));
+    let _ = contract.withdraw_ft(token.clone(), receiver.clone(), U128(123));
+
+    let receipts = get_receipts();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].receiver_id, token);
+    assert_eq!(
+        receipt_methods(&receipts[0]),
+        vec!["ft_transfer".to_owned()]
+    );
+    let (_, args) = receipt_function_call(&receipts[0]).unwrap();
+    let args: serde_json::Value = serde_json::from_slice(&args).unwrap();
+    assert_eq!(args["receiver_id"], receiver.to_string());
+    assert_eq!(args["amount"].as_str().unwrap(), "123");
+}
+
+#[test]
+#[should_panic(expected = "only the contract owner")]
+fn non_owner_cannot_withdraw_tokens() {
+    let mut contract = new_contract();
+    set_env_with_deposit(
+        "mallory.test.near",
+        0,
+        near_sdk::NearToken::from_yoctonear(1),
+    );
+    let _ = contract.withdraw_ft(
+        account("token.test.near"),
+        account("mallory.test.near"),
+        U128(1),
+    );
+}
+
+#[test]
+#[should_panic(expected = "attach at least 1 yoctoNEAR")]
+fn withdraw_requires_a_yocto_deposit() {
+    let mut contract = new_contract();
+    set_env_with_deposit(OWNER_ID, 0, near_sdk::NearToken::from_yoctonear(0));
+    let _ = contract.withdraw_ft(
+        account("token.test.near"),
+        account("treasury.test.near"),
+        U128(1),
+    );
+}
+
+#[test]
+#[should_panic(expected = "amount must be positive")]
+fn withdraw_rejects_zero() {
+    let mut contract = new_contract();
+    set_env_with_deposit(OWNER_ID, 0, near_sdk::NearToken::from_yoctonear(1));
+    let _ = contract.withdraw_ft(
+        account("token.test.near"),
+        account("treasury.test.near"),
+        U128(0),
+    );
 }

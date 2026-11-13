@@ -24,8 +24,9 @@ const MAX_PAGE_LIMIT: usize = 100;
 
 /// A registry entry for a deployed RBAC contract.
 ///
-/// `owner_id` is the owner supplied at deployment time. The child contract can later transfer
-/// ownership with `set_owner`, so clients that need the *current* owner should query the child's
+/// `owner_id` tracks the child's current owner: it is set at deployment and updated when a
+/// factory-deployed child calls [`Contract::on_owner_changed`] after `set_owner`. The update is
+/// best-effort, so clients that need the authoritative owner should query the child's
 /// `owner_id()` view.
 #[near(serializers = [borsh, json])]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,7 +34,7 @@ pub struct ContractRecord {
     pub account_id: AccountId,
     /// Subaccount label, without the factory suffix.
     pub name: String,
-    /// Owner supplied to the child contract's `new` call.
+    /// Current owner, as reported by the child. See the note above about best-effort updates.
     pub owner_id: AccountId,
     pub salary_token: AccountId,
     pub payout_interval_ns: U64,
@@ -54,10 +55,8 @@ pub struct Contract {
     code: Vec<u8>,
     /// child account -> record. Iterable for discovery.
     records: IterableMap<AccountId, ContractRecord>,
-    /// deploy-time owner -> child accounts.
+    /// owner -> child accounts. Updated on owner changes when the child notifies the factory.
     by_owner: LookupMap<AccountId, Vec<AccountId>>,
-    /// deployer -> child accounts.
-    by_deployer: LookupMap<AccountId, Vec<AccountId>>,
 }
 
 #[near]
@@ -81,7 +80,6 @@ impl Contract {
             code,
             records: IterableMap::new(b"records".as_slice()),
             by_owner: LookupMap::new(b"by_owner".as_slice()),
-            by_deployer: LookupMap::new(b"by_deployer".as_slice()),
         }
     }
 
@@ -169,6 +167,7 @@ impl Contract {
             "owner_id": owner_id,
             "salary_token": salary_token,
             "payout_interval_ns": payout_interval_ns.0.to_string(),
+            "factory_id": factory,
         })
         .to_string()
         .into_bytes();
@@ -202,6 +201,10 @@ impl Contract {
 
     /// Private callback for [`Contract::deploy`]. Records the child only when initialization
     /// succeeded.
+    ///
+    /// If initialization fails, the factory refunds its registry reserve to the deployer. The
+    /// forwarded child balance cannot be recovered: the child account exists without keys, and
+    /// the subaccount name cannot be reused.
     #[private]
     pub fn on_deploy(&mut self, record: ContractRecord) -> bool {
         require!(
@@ -209,24 +212,53 @@ impl Contract {
             "expected exactly one promise result"
         );
         if env::promise_result_checked(0, 1_024).is_err() {
+            self.refund_reserve(&record.deployer_id);
             events::emit_deploy_failed(record.account_id.as_str(), "initialization failed");
             return false;
         }
         if self.records.contains_key(&record.account_id) {
+            self.refund_reserve(&record.deployer_id);
             events::emit_deploy_failed(record.account_id.as_str(), "already registered");
             return false;
         }
 
         let account_id = record.account_id.clone();
         let owner_id = record.owner_id.clone();
-        let deployer_id = record.deployer_id.clone();
 
         self.records.insert(account_id.clone(), record.clone());
-        push_index(&mut self.by_owner, owner_id, account_id.clone());
-        push_index(&mut self.by_deployer, deployer_id, account_id);
+        push_index(&mut self.by_owner, owner_id, account_id);
 
         events::emit_deploy(&record);
         true
+    }
+
+    /// Updates the registry when a child contract transfers ownership.
+    ///
+    /// Only a registered child can call this, because the caller is the child account itself.
+    /// Factory-deployed children have no access keys, so only their own `set_owner` method can
+    /// produce this call. The child treats the notification as best-effort, so this index can be
+    /// stale if the call fails; clients should verify the child's `owner_id()`.
+    pub fn on_owner_changed(&mut self, new_owner_id: AccountId) -> bool {
+        let child = env::predecessor_account_id();
+        let Some(mut record) = self.records.get(&child).cloned() else {
+            env::panic_str("caller is not a registered child");
+        };
+        if record.owner_id != new_owner_id {
+            let old_owner = record.owner_id.clone();
+            remove_index(&mut self.by_owner, &old_owner, &child);
+            push_index(&mut self.by_owner, new_owner_id.clone(), child.clone());
+            record.owner_id = new_owner_id;
+            self.records.insert(child, record);
+        }
+        true
+    }
+
+    /// Refunds the factory's registry reserve to the deployer after a failed registration.
+    fn refund_reserve(&self, deployer_id: &AccountId) {
+        let reserve = env::storage_byte_cost().saturating_mul(REGISTRY_RESERVE_BYTES);
+        if reserve.as_yoctonear() > 0 {
+            let _ = Promise::new(deployer_id.clone()).transfer(reserve);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -258,10 +290,12 @@ impl Contract {
             .collect()
     }
 
-    /// Lists contracts whose deploy-time owner is `owner_id`.
+    /// Lists contracts whose current owner is `owner_id`.
     ///
-    /// The child contract may have transferred ownership since deployment. Query the child's
-    /// `owner_id()` for the current owner.
+    /// This index is advisory. A child updates it best-effort after `set_owner`; if that call
+    /// fails, the index can be stale. Anyone can also deploy a child with an arbitrary initial
+    /// `owner_id`, which adds that child to the named owner's list without their consent. Clients
+    /// must verify the live `owner_id()` on the child before acting on a result.
     pub fn contracts_of_owner(
         &self,
         owner_id: AccountId,
@@ -278,30 +312,30 @@ impl Contract {
             .filter_map(|account_id| self.records.get(account_id).cloned())
             .collect()
     }
-
-    /// Lists contracts deployed by `deployer_id`.
-    pub fn contracts_of_deployer(
-        &self,
-        deployer_id: AccountId,
-        from_index: Option<U128>,
-        limit: Option<u32>,
-    ) -> Vec<ContractRecord> {
-        let (from, limit) = pagination(from_index, limit);
-        self.by_deployer
-            .get(&deployer_id)
-            .into_iter()
-            .flatten()
-            .skip(from)
-            .take(limit)
-            .filter_map(|account_id| self.records.get(account_id).cloned())
-            .collect()
-    }
 }
 
 fn push_index(map: &mut LookupMap<AccountId, Vec<AccountId>>, key: AccountId, value: AccountId) {
     let mut values = map.get(&key).cloned().unwrap_or_default();
-    values.push(value);
-    map.insert(key, values);
+    if !values.contains(&value) {
+        values.push(value);
+        map.insert(key, values);
+    }
+}
+
+fn remove_index(
+    map: &mut LookupMap<AccountId, Vec<AccountId>>,
+    key: &AccountId,
+    value: &AccountId,
+) {
+    let Some(mut values) = map.get(key).cloned() else {
+        return;
+    };
+    values.retain(|entry| entry != value);
+    if values.is_empty() {
+        map.remove(key);
+    } else {
+        map.insert(key.clone(), values);
+    }
 }
 
 fn validate_subaccount_name(name: &str, factory: &str) {

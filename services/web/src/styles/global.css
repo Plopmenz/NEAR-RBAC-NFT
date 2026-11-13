@@ -133,9 +133,16 @@ h4 {
   width: 2rem;
   height: 2rem;
   border-radius: 9px;
-  color: #04110c;
-  background: linear-gradient(135deg, var(--accent), #54d9ff);
-  font-weight: 900;
+  color: #eafff7;
+  background: linear-gradient(135deg, rgba(124, 245, 200, 0.28), rgba(84, 217, 255, 0.16));
+  border: 1px solid rgba(124, 245, 200, 0.4);
+  box-shadow: inset 0 0 18px rgba(124, 245, 200, 0.12);
+}
+
+.brand-mark svg {
+  width: 1.55rem;
+  height: 1.55rem;
+  color: var(--accent);
 }
 
 .brand-accent {
@@ -187,8 +194,55 @@ h4 {
 }
 
 .hero {
-  max-width: 780px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  align-items: center;
+  gap: clamp(1.5rem, 4vw, 3rem);
   margin-bottom: clamp(2rem, 5vw, 3.5rem);
+}
+
+.hero-copy {
+  max-width: 640px;
+}
+
+.hero-art {
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background:
+    radial-gradient(420px 200px at 85% 0%, rgba(122, 169, 255, 0.12), transparent 70%),
+    linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: var(--shadow);
+}
+
+.hero-art svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.flow-node rect {
+  fill: rgba(9, 15, 21, 0.78);
+  stroke: var(--line-strong);
+  stroke-width: 1.2;
+}
+
+.flow-node.accent rect {
+  stroke: rgba(124, 245, 200, 0.55);
+  fill: rgba(124, 245, 200, 0.06);
+}
+
+.flow-title {
+  fill: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.flow-sub {
+  fill: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
 }
 
 .eyebrow {
@@ -449,6 +503,27 @@ input[readonly] {
   filter: none;
 }
 
+.btn[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.8;
+}
+
+.btn[aria-busy="true"]::after {
+  content: "";
+  width: 0.72em;
+  height: 0.72em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 700ms linear infinite;
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .btn.ghost {
   background: transparent;
   color: var(--text);
@@ -675,6 +750,18 @@ td .muted {
   background: var(--warning-soft);
 }
 
+.tag.ok {
+  color: var(--accent);
+  border-color: rgba(124, 245, 200, 0.35);
+  background: rgba(124, 245, 200, 0.08);
+}
+
+.tag.error {
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.4);
+  background: rgba(255, 107, 107, 0.1);
+}
+
 .inline-form {
   display: flex;
   align-items: center;
@@ -848,6 +935,10 @@ td .muted {
 @media (max-width: 820px) {
   .topbar {
     align-items: flex-start;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
   }
 
   .two-column {

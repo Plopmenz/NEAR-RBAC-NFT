@@ -7,7 +7,7 @@ use near_parameters::RuntimeFeesConfig;
 use near_sdk::json_types::{U128, U64};
 use near_sdk::mock::{MockAction, Receipt};
 use near_sdk::test_utils::{get_created_receipts, VMContextBuilder};
-use near_sdk::{test_vm_config, testing_env, AccountId, PromiseResult, VMContext};
+use near_sdk::{test_vm_config, testing_env, AccountId, NearToken, PromiseResult, VMContext};
 
 use crate::Contract;
 
@@ -38,11 +38,23 @@ pub fn context(predecessor: AccountId, block_timestamp: u64) -> VMContext {
         .signer_account_id(predecessor.clone())
         .predecessor_account_id(predecessor)
         .block_timestamp(block_timestamp)
+        // Covers the mint storage deposit for tests that call `mint_role`.
+        .attached_deposit(NearToken::from_near(1))
         .build()
 }
 
 pub fn set_env(predecessor: AccountId, block_timestamp: u64) {
     testing_env!(context(predecessor, block_timestamp));
+}
+
+pub fn set_env_with_deposit(predecessor: &str, block_timestamp: u64, deposit: NearToken) {
+    testing_env!(VMContextBuilder::new()
+        .current_account_id(contract_id())
+        .signer_account_id(account(predecessor))
+        .predecessor_account_id(account(predecessor))
+        .block_timestamp(block_timestamp)
+        .attached_deposit(deposit)
+        .build());
 }
 
 pub fn set_env_with_results(
@@ -61,8 +73,13 @@ pub fn set_env_with_results(
 
 /// Creates a contract with the standard test owner, salary token and one-second payout interval.
 pub fn new_contract() -> Contract {
+    new_contract_with_factory(None)
+}
+
+/// Creates a contract that knows the factory that deployed it.
+pub fn new_contract_with_factory(factory_id: Option<AccountId>) -> Contract {
     set_env(owner(), 0);
-    Contract::new(owner(), salary_token(), U64(INTERVAL_NS))
+    Contract::new(owner(), salary_token(), U64(INTERVAL_NS), factory_id)
 }
 
 /// Creates a role at timestamp zero as the contract owner.

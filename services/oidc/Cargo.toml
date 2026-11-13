@@ -27,7 +27,7 @@ serde_json.workspace = true
 sha2.workspace = true
 subtle = "2"
 thiserror.workspace = true
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

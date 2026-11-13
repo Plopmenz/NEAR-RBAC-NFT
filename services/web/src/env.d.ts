@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly PUBLIC_FACTORY_CONTRACT_ID?: string;
   readonly PUBLIC_EXPECTED_CHILD_CODE_HASH?: string;
   readonly PUBLIC_EXPLORER_URL?: string;
+  /** Absolute public site URL, used for canonical and social preview tags. */
+  readonly PUBLIC_SITE_URL?: string;
 }
 
 interface ImportMeta {
