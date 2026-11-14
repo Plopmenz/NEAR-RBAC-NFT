@@ -9,17 +9,17 @@
 # the JWT `iss` claim and as the prefix of every discovery URL, so it must match
 # exactly what clients use (no trailing slash).
 
-issuer = "https://auth.example.com"
+issuer = "https://payrole-oidc.plopmenz.openmesh.cloud"
 listen = "127.0.0.1:8080"
 
 # NEAR JSON-RPC endpoint used to call `roles_of` on the contract and to check
 # that a NEP-413 public key is an access key of the claimed account.
-rpc_url = "https://rpc.testnet.near.org"
-contract_id = "payrole.testnet"
+rpc_url = "https://test.rpc.fastnear.com"
+contract_id = "plopmenz.payrole-factory.testnet"
 
 # NEAR network used by the wallet sign-in button on the login page. Defaults to
 # the network implied by rpc_url.
-# network = "testnet"
+network = "testnet"
 
 # PKCS#8 PEM RSA private key used to sign JWTs. If this is omitted, a fresh
 # ephemeral key is generated at startup and all tokens become invalid on
@@ -29,7 +29,7 @@ contract_id = "payrole.testnet"
 #     -out services/oidc/signing-key.pem
 #   chmod 600 services/oidc/signing-key.pem
 #
-# signing_key_path = "services/oidc/signing-key.pem"
+signing_key_path = "services/oidc/signing-key.pem"
 
 # NEP-413 recipient defaults to the host part of `issuer`.
 # nep413_recipient = "auth.example.com"
@@ -60,13 +60,6 @@ allowed_scopes = ["openid", "profile", "roles"]
 # a public PKCE client on a different origin, so it needs this. Exact origins only, no path.
 allowed_origins = ["https://near-payrole.vercel.app"]
 
-# A public client. Public clients have no secret and must use PKCE (S256).
-[[clients]]
-client_id = "demo-app"
-name = "Demo app"
-redirect_uris = ["https://app.example.com/callback"]
-required_roles = ["admin"]
-
 # The hosted PayRole web app. It uses OIDC only to prove which NEAR account is signed in; the
 # app reads role NFTs from the contract registry itself. Keep required_roles empty so every
 # wallet can inspect its own access, then add a role here if the login itself should be gated.
@@ -75,14 +68,3 @@ client_id = "payrole-web"
 name = "PayRole web"
 redirect_uris = ["https://near-payrole.vercel.app/oidc/callback"]
 required_roles = []
-
-# A confidential client. It must authenticate at the token endpoint using
-# client_secret_basic or client_secret_post. Treat the secret like a password.
-[[clients]]
-client_id = "service-app"
-name = "Internal service"
-redirect_uris = ["https://service.example.com/callback"]
-client_secret = "replace-with-a-long-random-secret"
-required_roles = ["admin", "employee"]
-# Optional per-client scope restriction; defaults to the global allowed_scopes.
-# allowed_scopes = ["openid", "profile", "roles"]

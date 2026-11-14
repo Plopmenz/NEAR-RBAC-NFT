@@ -11,8 +11,10 @@ architecture, and security model; this file focuses on running the service.
 1. An OIDC client redirects to `/authorize` with PKCE (`S256`), a registered `client_id` and
    exact `redirect_uri`, and optional `state`/`nonce`.
 2. The provider renders a login page with a NEP-413 message and a 256-bit nonce.
-3. The user signs the message with NEAR Connect. The page posts the account id, public key,
-   and signature to `/login`. Manual signature entry remains as a fallback.
+3. The user connects a wallet and then presses **Sign the login message** to sign with NEAR
+   Connect. Signing is a separate click so browsers do not block the wallet's signature popup.
+   The page posts the account id, public key, and signature to `/login`. Manual signature entry
+   remains as a fallback.
 4. The provider verifies the signature, optionally checks that the public key is an access
    key of the claimed account, then reads `roles_of` from the contract and checks the
    client's `required_roles`.

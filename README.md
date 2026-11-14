@@ -157,8 +157,9 @@ enough to receive it.
 ### 8. Sign in with OIDC and see ✓ / ✗ access
 
 **Do:** Open the **OIDC access** tab and press **Sign in with OIDC**. The hosted provider shows a
-NEAR Connect login page; choose a wallet and approve the NEP-413 message with the same wallet
-account. You are redirected back to `/oidc/callback` and then to the access tab.
+NEAR Connect login page; connect a wallet, then press **Sign the login message** and approve the
+NEP-413 message with the same wallet account. You are redirected back to `/oidc/callback` and
+then to the access tab.
 
 **See:** the session card shows the OIDC account, issuer, scopes, expiry, and live roles from
 `/userinfo`. Below it, each configured label is rendered with **✓ granted** or **✗ denied**,

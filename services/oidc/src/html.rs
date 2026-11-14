@@ -80,8 +80,8 @@ pub fn login_page(config: &Config, client: &ClientConfig, pending: &PendingLogin
 <input id="account_id" name="account_id" form="login" autocomplete="username"
        placeholder="alice.near" required>
 
-<button type="button" id="connect-wallet">Sign with NEAR Connect</button>
-<p class="muted" id="wallet-status" role="status"></p>
+<button type="button" id="connect-wallet">Connect NEAR wallet</button>
+<p class="muted" id="wallet-status" role="status">Connect a wallet, then press the button again to sign the NEP-413 message.</p>
 
 <form id="login" method="post" action="/login">
   <input type="hidden" name="request_id" value="{request_id}">
@@ -120,6 +120,8 @@ function setWalletStatus(text, isError) {{
 }}
 
 let connector = null;
+let connectedWallet = null;
+let connectedSignerId;
 
 async function getConnector() {{
   if (connector) return connector;
@@ -138,6 +140,57 @@ async function getConnector() {{
   return connector;
 }}
 
+function errorText(error) {{
+  return error && error.message ? error.message : error;
+}}
+
+async function connectWallet() {{
+  button.disabled = true;
+  setWalletStatus("Opening your wallet…", false);
+  try {{
+    const connector = await getConnector();
+    setWalletStatus("Choose a wallet…", false);
+    // Always open the selector so it only offers wallets that can sign NEP-413 messages.
+    const wallet = await connector.connect();
+    // Wallets with several connected accounts need an explicit signer.
+    try {{
+      connectedSignerId = (await wallet.getAccounts())[0]?.accountId;
+    }} catch {{}}
+    connectedWallet = wallet;
+    button.textContent = "Sign the login message";
+    button.disabled = false;
+    setWalletStatus(
+      "Connected" +
+        (connectedSignerId ? " as " + connectedSignerId : "") +
+        ". Press “Sign the login message” to approve the NEP-413 signature.",
+      false,
+    );
+  }} catch (error) {{
+    button.disabled = false;
+    setWalletStatus("Wallet connection failed: " + errorText(error), true);
+  }}
+}}
+
+async function signLoginMessage() {{
+  // This must run directly from a click: opening the wallet's signing popup after an await would
+  // be treated as a blocked popup by the browser.
+  button.disabled = true;
+  setWalletStatus("Waiting for the signature…", false);
+  try {{
+    const params = {{ message, recipient, nonce }};
+    if (connectedSignerId) params.signerId = connectedSignerId;
+    const signed = await connectedWallet.signMessage(params);
+    document.getElementById("account_id").value = signed.accountId;
+    document.getElementById("public_key").value = signed.publicKey;
+    document.getElementById("signature").value = signed.signature;
+    setWalletStatus("Signed in as " + signed.accountId + ". Continuing…", false);
+    form.requestSubmit();
+  }} catch (error) {{
+    button.disabled = false;
+    setWalletStatus("Wallet sign-in failed: " + errorText(error), true);
+  }}
+}}
+
 if (callbackUrl) {{
   button.disabled = true;
   setWalletStatus(
@@ -145,34 +198,11 @@ if (callbackUrl) {{
     true,
   );
 }} else {{
-  button.addEventListener("click", async () => {{
-    button.disabled = true;
-    setWalletStatus("Opening your wallet…", false);
-    try {{
-      const connector = await getConnector();
-      setWalletStatus("Choose a wallet…", false);
-      // Always open the selector so it only offers wallets that can sign NEP-413 messages.
-      const wallet = await connector.connect();
-      // Wallets with several connected accounts need an explicit signer.
-      let signerId;
-      try {{
-        signerId = (await wallet.getAccounts())[0]?.accountId;
-      }} catch {{}}
-      setWalletStatus("Waiting for the signature…", false);
-      const params = {{ message, recipient, nonce }};
-      if (signerId) params.signerId = signerId;
-      const signed = await wallet.signMessage(params);
-      document.getElementById("account_id").value = signed.accountId;
-      document.getElementById("public_key").value = signed.publicKey;
-      document.getElementById("signature").value = signed.signature;
-      setWalletStatus("Signed in as " + signed.accountId + ". Continuing…", false);
-      form.requestSubmit();
-    }} catch (error) {{
-      button.disabled = false;
-      setWalletStatus(
-        "Wallet sign-in failed: " + (error && error.message ? error.message : error),
-        true,
-      );
+  button.addEventListener("click", () => {{
+    if (connectedWallet) {{
+      void signLoginMessage();
+    }} else {{
+      void connectWallet();
     }}
   }});
 }}
@@ -258,10 +288,13 @@ mod tests {
     fn login_page_wires_near_connect() {
         let config = config();
         let html = login_page(&config, &config.clients[0], &pending());
-        assert!(html.contains("Sign with NEAR Connect"));
+        assert!(html.contains("Connect NEAR wallet"));
+        assert!(html.contains("Sign the login message"));
         assert!(html.contains("https://esm.sh/@hot-labs/near-connect@0.12.0"));
         assert!(html.contains("const network = \"testnet\";"));
         assert!(html.contains("new module.NearConnector({"));
+        assert!(html.contains("void connectWallet();"));
+        assert!(html.contains("void signLoginMessage();"));
         assert!(html.contains("form.requestSubmit();"));
         assert!(html.contains("Sign &lt;in&gt;"));
     }
