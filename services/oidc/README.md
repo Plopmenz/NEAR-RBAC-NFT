@@ -74,7 +74,7 @@ Copy [`config.example.toml`](config.example.toml) to `config.toml` (git-ignored)
 | `name` | Shown on the login page. |
 | `redirect_uris` | Required non-empty list; matched exactly. |
 | `client_secret` | Optional. If present, the client is confidential and must authenticate at `/token` (and `/introspect` when it sends credentials). |
-| `required_roles` | All of these on-chain roles must be held at login. Rechecked by `/userinfo` and `/introspect`. |
+| `required_roles` | All of these on-chain roles must be held at login, read from the provider's configured `contract_id`. Rechecked by `/userinfo` and `/introspect`. |
 | `allowed_scopes` | Optional per-client restriction; defaults to the global list. |
 
 Public clients (no secret) must use PKCE. Confidential clients can use
@@ -101,6 +101,20 @@ role NFTs from the registry itself and renders ✓ / ✗ for configured access l
 only if the login itself should be gated. For a different host, replace the origin and callback
 with that deployment's exact values, and set the matching `PUBLIC_OIDC_*` variables when building
 the web app.
+
+### One contract per provider
+
+`contract_id` is deliberately a single account. The provider reads `roles_of` from it at login
+and on every `/userinfo` and `/introspect` call, and `required_roles` is enforced against that
+contract only. This fits production, where the organization that runs the provider also owns the
+contract it authorizes against. It is not a multi-tenant issuer: a second DAO deploys its own
+provider instance with its own `contract_id` and signing key.
+
+The hosted PayRole demo does not use OIDC role enforcement. Its client has
+`required_roles = []`, and the access tab uses the OIDC session only for the account id, then
+reads role NFTs from every factory-registry contract and applies the browser-local role →
+access-label mapping. The provider still demonstrates wallet SSO and reports live roles for its
+configured contract.
 
 ## Running
 

@@ -61,6 +61,9 @@ testnet: `payrole-factory.testnet`. Hosted demo: <https://near-payrole.vercel.ap
 > **Hosted demo:** <https://near-payrole.vercel.app> on NEAR testnet. The
 > [judge walkthrough](#judge-walkthrough-do-x-see-y) starts there and uses only the browser.
 
+> **Hackathon:** built for NEAR HACKATHON, November 2026. The contracts and the demo run on NEAR
+> testnet.
+
 ## Judge walkthrough: do X, see Y
 
 This walkthrough starts at the hosted app — **<https://near-payrole.vercel.app>** — and uses
@@ -161,14 +164,14 @@ NEAR Connect login page; connect a wallet, then press **Sign the login message**
 NEP-413 message with the same wallet account. You are redirected back to `/oidc/callback` and
 then to the access tab.
 
-**See:** the session card shows the OIDC account, issuer, scopes, expiry, and live roles from
-`/userinfo`. Below it, each configured label is rendered with **✓ granted** or **✗ denied**,
-together with the roles that grant it, checked against role NFTs read directly from every
-registry contract. If no labels are configured, the page uses role names as sample labels so the
-check/cross behaviour is still visible. Press **Refresh roles** after minting or burning to see
-access change without signing in again. **Sign out** clears the local session; a connected
-wallet is a separate session and does not sign you in here, so refreshing after sign-out stays
-signed out.
+**See:** the session card shows the OIDC account, issuer, scopes, expiry, and the roles the
+provider reports from `/userinfo` for its configured contract. Below it, each configured label
+is rendered with **✓ granted** or **✗ denied**, together with the roles that grant it, checked
+against role NFTs read directly from every registry contract. If no labels are configured, the
+page uses role names as sample labels so the check/cross behaviour is still visible. Press
+**Refresh roles** after minting or burning to see access change without signing in again.
+**Sign out** clears the local session; a connected wallet is a separate session and does not
+sign you in here, so refreshing after sign-out stays signed out.
 
 The web app is a public OpenID Connect client using the authorization-code flow with PKCE
 (S256); it stores no client secret. The provider must register the exact callback
@@ -185,7 +188,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-**See:** `test result: ok` for every crate, ending with **172 Rust tests passed**, then no
+**See:** `test result: ok` for every crate, ending with **177 Rust tests passed**, then no
 formatting diffs and no clippy warnings. The suite covers role hashing, initialization/admin
 permissions, role creation and delegation, mint/burn, pagination, holder indexes, NEP-245
 reads/metadata, salary accrual, partial intervals, independent holder claims, burn payouts and
@@ -202,7 +205,7 @@ npm run check
 npm run build
 ```
 
-**See:** **47 Vitest tests passed**, `astro check` reports `0 errors`, and a static site is
+**See:** **53 Vitest tests passed**, `astro check` reports `0 errors`, and a static site is
 written to `services/web/dist/`. The tests cover role-id vectors, account/subaccount validation,
 amount/duration parsing, payout-interval defaults, interval progress, favorites scoping, bounded
 concurrency, role/contract permission helpers, local access-label mapping, PKCE S256 vectors, and
@@ -222,6 +225,12 @@ sha256sum res/payrole_nft.wasm
 profile (`opt-level = "z"`, LTO, one codegen unit, abort-on-panic, overflow checks, symbols
 stripped). Exact sizes vary with the toolchain. The `sha256sum` value is the hash the factory
 stores and clients can pin as `PUBLIC_EXPECTED_CHILD_CODE_HASH`.
+
+> The contract embeds NEP-330 source metadata, including the repository URL. A build made after
+> the repository rename therefore has a different hash from the wasm pinned by the live
+> `payrole-factory.testnet` (`c8d3c447…`). The hosted demo and the committed
+> `PUBLIC_EXPECTED_CHILD_CODE_HASH` refer to that deployed build; when you deploy your own
+> factory, pin the hash of the wasm you actually built.
 
 ### 10. Run the OIDC provider locally (optional)
 
@@ -268,6 +277,7 @@ the curl URLs) to another port. For the hosted web client, register
 - [Judge walkthrough: do X, see Y](#judge-walkthrough-do-x-see-y)
 - [What the role NFT design fixes](#what-the-role-nft-design-fixes)
 - [Repository layout](#repository-layout)
+- [Built with](#built-with)
 - [Quick start](#quick-start)
 - [Role and token identifiers](#role-and-token-identifiers)
 - [Contract API](#contract-api)
@@ -331,6 +341,26 @@ the curl URLs) to another port. For the hosted web client, register
 ├── scripts/deploy-salary-token.sh # Deploy the permissionless demo NEP-141 for the hosted demo
 └── .github/workflows/ci.yml
 ```
+
+## Built with
+
+Nothing here is a pre-hackathon baseline: the repository was created during the event and every
+commit falls inside the window. The libraries and tooling are listed below; most of the
+implementation was written with AI coding assistance and reviewed, tested, and deployed by the
+author.
+
+- **Contracts:** Rust 1.95 with `near-sdk` 5.30 (NEP-245 role NFTs, NEP-141 salary accounting),
+  `borsh` 1, and `sha2` 0.10.
+- **Contract tests:** the Rust test harness plus `near-workspaces` 0.24 for the Docker-gated
+  sandbox tests.
+- **OIDC provider:** `axum` 0.8, `tokio` 1, `jsonwebtoken` 9.3, `rsa` 0.9, `ed25519-dalek` 2,
+  `borsh` 1, and `tower-http` 0.6.
+- **Web app:** Astro 7.4, TypeScript 6, and `@hot-labs/near-connect` 0.12 for wallet
+  connection and NEP-413 signing; Vitest 5 for the unit tests.
+- **Tooling:** Cargo, `wasm-opt`, GitHub Actions, Vercel, and a self-hosted OIDC service.
+
+The complete dependency lists are in `Cargo.toml`, `services/oidc/Cargo.toml`, and
+`services/web/package.json`.
 
 ## Quick start
 
@@ -962,6 +992,25 @@ required_roles = []
 slash. OAuth redirects do not need CORS, but discovery, the token exchange, and `/userinfo` do
 because they are `fetch` calls from the static app.
 
+### Scope: one contract per provider
+
+`contract_id` is intentionally a single account. The provider reads `roles_of` from that contract
+at login and again on every `/userinfo` and `/introspect` call, and a client's `required_roles`
+is enforced against that contract only. That is the right model for a production deployment
+where the organization running the provider also owns the payroll contract it authorizes against
+(for example, one company or DAO with one PayRole contract).
+
+It is not a multi-tenant issuer: roles on a different contract are not part of this provider's
+`roles` claim or `required_roles` checks. A second DAO runs its own provider instance with its own
+`contract_id` and signing key.
+
+The hosted demo therefore does **not** enforce access through the OIDC role claim. Its
+`payrole-web` client uses `required_roles = []`, the access tab takes only the account id from
+the OIDC session, and the ✓ / ✗ access labels come from role NFTs read from every
+factory-registry contract plus the browser-local role → access-label mapping. That keeps the
+showcase working for a contract a judge deploys, while the provider still demonstrates
+wallet-based SSO with live role reports for its own contract.
+
 Generate a signing key and run:
 
 ```bash
@@ -1111,6 +1160,10 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 
 **OIDC**
 
+- The provider authorizes against one `contract_id`. Its `roles` claim, `required_roles` checks,
+  and live revocation only see roles on that contract, so each DAO or company needs its own
+  provider instance. The hosted demo avoids this by using OIDC for identity only and evaluating
+  roles from the factory registry in the browser.
 - The pending-login/code/session store is process-local and in-memory. Restarting loses
   sessions; multiple replicas do not share state. Expired entries are pruned by a periodic
   sweeper and pending logins are capped, but the store remains memory-bound per process.
@@ -1141,8 +1194,8 @@ This is deliberately a hackathon-scale implementation. Known limitations:
 cargo test --workspace
 ```
 
-The Rust workspace currently has **172 tests**, the web app has **47 Vitest tests**, and there
-are **5 Docker-gated sandbox tests** (**213 total** when the sandbox job runs):
+The Rust workspace currently has **177 tests**, the web app has **53 Vitest tests**, and there
+are **5 Docker-gated sandbox tests** (**235 total** when the sandbox job runs):
 
 - `crates/payrole-common`: 6 tests covering role hashing, token-id encoding, documented vectors,
   and role-name validation.
@@ -1153,14 +1206,14 @@ are **5 Docker-gated sandbox tests** (**213 total** when the sandbox job runs):
 - `contracts/payrole-factory`: 20 tests covering immutable initialization and code hashing, name
   and gas/deposit validation, child creation receipts, callback registration/failure/refund,
   duplicate protection, owner-index updates, and registry pagination/indexes.
-- `services/oidc`: 38 unit tests covering config validation (including the example config and
+- `services/oidc`: 43 unit tests covering config validation (including the example config and
   CORS origins), RSA/JWKS, NEP-413 serialization and signatures, role-result decoding, store
   pruning/caps, and handler helpers.
 - `services/oidc/tests/oidc_flow.rs`: 16 end-to-end HTTP tests covering discovery, JWKS,
   full PKCE authorization-code flow, code binding/reuse/expiry, confidential clients,
   login signature/access-key checks, required roles, live role revocation, logout,
   introspection, introspection client binding, the pending-login 429 response, and CORS.
-- `services/web/tests`: 47 Vitest tests covering role-id vectors and token ids, account and
+- `services/web/tests`: 53 Vitest tests covering role-id vectors and token ids, account and
   subaccount validation, amount/duration formatting and parsing, payout-interval defaults,
   interval progress, favorites scoping/persistence, bounded-concurrency mapping, role/contract
   permission helpers, local access-label mapping, PKCE S256 vectors, and the OIDC callback.

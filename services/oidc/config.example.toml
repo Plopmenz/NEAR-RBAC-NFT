@@ -15,6 +15,10 @@ listen = "127.0.0.1:8080"
 # NEAR JSON-RPC endpoint used to call `roles_of` on the contract and to check
 # that a NEP-413 public key is an access key of the claimed account.
 rpc_url = "https://test.rpc.fastnear.com"
+
+# PayRole contract this provider authorizes against. One provider instance
+# serves one contract: `roles` and `required_roles` are read from here only.
+# Run another instance with its own contract_id and signing key for another DAO.
 contract_id = "plopmenz.payrole-factory.testnet"
 
 # NEAR network used by the wallet sign-in button on the login page. Defaults to
