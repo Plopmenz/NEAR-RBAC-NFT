@@ -17,7 +17,7 @@ async function init(): Promise<void> {
   if (state.tab === "roles" && state.rolesAddress) {
     void scanRoles();
   }
-  if (state.tab === "access") {
+  if (state.tab === "access" && state.oidcSession) {
     void scanAccess();
   }
 

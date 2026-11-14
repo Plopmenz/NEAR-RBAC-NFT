@@ -134,16 +134,24 @@ function roleTable(snapshot: ContractSnapshot, roles: RoleView[]): string {
       ${roles
         .map(
           (role) => `<tr>
-            <td><code>${escapeHtml(role.name)}</code><span class="muted">id ${role.role_id}</span></td>
-            <td>${escapeHtml(
+            <td data-label="Role"><div class="cell"><code>${escapeHtml(
+              role.name,
+            )}</code><span class="muted">id ${role.role_id}</span></div></td>
+            <td data-label="Salary"><div class="cell">${escapeHtml(
               formatToken(role.salary, snapshot.token, 5),
             )}<span class="muted">per ${escapeHtml(
               formatDurationNs(snapshot.payoutIntervalNs),
-            )}</span></td>
-            <td>${role.holders}</td>
-            <td>${roleOwnerLabel(snapshot, role)}</td>
-            <td>${roleAccessLabels(snapshot, role)}</td>
-            <td>${roleActions(snapshot, role)}</td>
+            )}</span></div></td>
+            <td data-label="Holders"><div class="cell">${role.holders}</div></td>
+            <td data-label="Owner"><div class="cell">${roleOwnerLabel(snapshot, role)}</div></td>
+            <td data-label="OIDC access"><div class="cell">${roleAccessLabels(
+              snapshot,
+              role,
+            )}</div></td>
+            <td data-label="Membership actions"><div class="cell">${roleActions(
+              snapshot,
+              role,
+            )}</div></td>
           </tr>`,
         )
         .join("")}
@@ -279,32 +287,38 @@ function membershipTable(item: MembershipContract): string {
         claimable = 0n;
       }
       return `<tr>
-        <td><code>${escapeHtml(membership.role.name)}</code><span class="muted">id ${
-          membership.role.role_id
-        }</span></td>
-        <td>${escapeHtml(formatToken(membership.role.salary, snapshot.token, 5))}</td>
-        <td class="claim-cell">
-          <span class="claim-amount">${escapeHtml(
-            formatToken(claimable, snapshot.token, 6),
-          )}</span>
-          <button class="btn small" type="button" data-action="claim" data-contract="${escapeHtml(
-            snapshot.accountId,
-          )}" data-account="${escapeHtml(accountId)}" data-role="${escapeHtml(
-            membership.role.name,
-          )}">Claim</button>
-        </td>
-        <td>
-          <div class="progress-wrap">
-            <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent.toFixed(
-              1,
-            )}"><span class="progress-fill" style="width:${percent.toFixed(1)}%"></span></div>
-            <div class="progress-meta"><span>${formatPercent(
-              progress.fraction,
-            )}</span><span>${escapeHtml(formatDurationNs(progress.remainingNs))} left</span></div>
+        <td data-label="Role"><div class="cell"><code>${escapeHtml(
+          membership.role.name,
+        )}</code><span class="muted">id ${membership.role.role_id}</span></div></td>
+        <td data-label="Salary / interval"><div class="cell">${escapeHtml(
+          formatToken(membership.role.salary, snapshot.token, 5),
+        )}</div></td>
+        <td class="claim-cell" data-label="Claimable">
+          <div class="cell">
+            <span class="claim-amount">${escapeHtml(
+              formatToken(claimable, snapshot.token, 6),
+            )}</span>
+            <button class="btn small" type="button" data-action="claim" data-contract="${escapeHtml(
+              snapshot.accountId,
+            )}" data-account="${escapeHtml(accountId)}" data-role="${escapeHtml(
+              membership.role.name,
+            )}">Claim</button>
           </div>
-          <span class="muted">Last claim: ${
-            membership.lastClaim ? escapeHtml(formatTimestampNs(membership.lastClaim)) : "never"
-          }</span>
+        </td>
+        <td data-label="Payout progress">
+          <div class="cell">
+            <div class="progress-wrap">
+              <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent.toFixed(
+                1,
+              )}"><span class="progress-fill" style="width:${percent.toFixed(1)}%"></span></div>
+              <div class="progress-meta"><span>${formatPercent(
+                progress.fraction,
+              )}</span><span>${escapeHtml(formatDurationNs(progress.remainingNs))} left</span></div>
+            </div>
+            <span class="muted">Last claim: ${
+              membership.lastClaim ? escapeHtml(formatTimestampNs(membership.lastClaim)) : "never"
+            }</span>
+          </div>
         </td>
       </tr>`;
     })
@@ -576,16 +590,18 @@ function accessContractCard(item: MembershipContract): string {
   const rows = items
     .map(
       (access) => `<tr>
-        <td><code>${escapeHtml(access.label)}</code>${
+        <td data-label="Access label"><div class="cell"><code>${escapeHtml(
+          access.label,
+        )}</code>${
           access.roles.length > 0
             ? `<span class="muted">via ${escapeHtml(access.roles.join(", "))}</span>`
             : '<span class="muted">role-name fallback</span>'
-        }</td>
-        <td>${
+        }</div></td>
+        <td data-label="Status"><div class="cell">${
           access.granted
             ? '<span class="tag ok">✓ granted</span>'
             : '<span class="tag error">✗ denied</span>'
-        }</td>
+        }</div></td>
       </tr>`,
     )
     .join("");
@@ -628,7 +644,7 @@ export function renderAccess(): void {
   const refresh = byId<HTMLButtonElement>("access-refresh");
   const configured = oidcConfigured(state.config);
   const session = state.oidcSession;
-  const accountId = session?.accountId ?? state.walletAccount ?? "";
+  const accountId = session?.accountId ?? "";
 
   login.hidden = !configured || Boolean(session);
   logout.hidden = !session;
@@ -659,12 +675,12 @@ export function renderAccess(): void {
       }</span></div>
     </div>`;
   } else {
-    sessionBox.innerHTML = `<p class="muted">Sign in with your NEAR wallet through the OIDC provider. The provider proves the account with NEP-413 and the access page then reads live role NFTs from the registry. ${state.walletAccount ? "You can also preview the access page with the connected wallet until you sign in." : ""}</p>`;
+    sessionBox.innerHTML = `<p class="muted">Sign in with your NEAR wallet through the OIDC provider. The provider proves the account with NEP-413 and the access page then reads live role NFTs from the registry. A wallet connection on its own does not sign you in here.</p>`;
   }
 
   if (!accountId) {
     summary.innerHTML = "";
-    list.innerHTML = `<div class="empty"><strong>No account selected</strong>Sign in with OIDC or connect a wallet to see access labels.</div>`;
+    list.innerHTML = `<div class="empty"><strong>Not signed in</strong>Use <em>Sign in with OIDC</em> to prove your NEAR account and see its access labels.</div>`;
     return;
   }
 

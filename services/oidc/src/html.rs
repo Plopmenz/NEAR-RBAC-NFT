@@ -38,7 +38,9 @@ input, textarea { width: 100%; box-sizing: border-box; padding: 0.5rem; margin-t
                   font: inherit; border: 1px solid #888; border-radius: 0.35rem; }
 textarea { min-height: 5rem; }
 button { margin-top: 1rem; padding: 0.6rem 1rem; font: inherit; cursor: pointer; }
+button:disabled { opacity: 0.6; cursor: default; }
 .muted { opacity: 0.75; font-size: 0.9rem; }
+.status.error { color: #b42318; font-size: 0.9rem; }
 code { word-break: break-all; }
 "#;
 
@@ -47,6 +49,7 @@ pub fn login_page(config: &Config, client: &ClientConfig, pending: &PendingLogin
     let nonce = STANDARD.encode(pending.nep413_nonce);
     let recipient = config.recipient();
     let callback_url = config.nep413_callback_url();
+    let network = config.network();
     let message = pending.message.as_str();
     let client_name = escape(client.display_name());
     let scopes = escape(&pending.scope);
@@ -77,7 +80,8 @@ pub fn login_page(config: &Config, client: &ClientConfig, pending: &PendingLogin
 <input id="account_id" name="account_id" form="login" autocomplete="username"
        placeholder="alice.near" required>
 
-<button type="button" onclick="signWithWallet()">Sign with NEAR wallet</button>
+<button type="button" id="connect-wallet">Sign with NEAR Connect</button>
+<p class="muted" id="wallet-status" role="status"></p>
 
 <form id="login" method="post" action="/login">
   <input type="hidden" name="request_id" value="{request_id}">
@@ -99,41 +103,78 @@ pub fn login_page(config: &Config, client: &ClientConfig, pending: &PendingLogin
 <code>tag || borsh({{message, nonce, recipient, callback_url}})</code> with the key that
 controls your account. This page never sees your private key.</p>
 
-<script>
+<script type="module">
 const message = {message_js};
-const nonce = Uint8Array.from(atob({nonce_js}), c => c.charCodeAt(0));
+const nonce = Uint8Array.from(atob({nonce_js}), (c) => c.charCodeAt(0));
 const recipient = {recipient_js};
 const callbackUrl = {callback_js};
+const network = {network_js};
 
-async function findWallet() {{
-  if (window.nearWallet && typeof window.nearWallet.signMessage === 'function') {{
-    return window.nearWallet;
-  }}
-  if (window.selector && typeof window.selector.wallet === 'function') {{
-    const wallet = await window.selector.wallet();
-    if (wallet && typeof wallet.signMessage === 'function') {{
-      return wallet;
-    }}
-  }}
-  return null;
+const button = document.getElementById("connect-wallet");
+const walletStatus = document.getElementById("wallet-status");
+const form = document.getElementById("login");
+
+function setWalletStatus(text, isError) {{
+  walletStatus.textContent = text;
+  walletStatus.className = isError ? "status error" : "muted";
 }}
 
-async function signWithWallet() {{
-  const accountId = document.getElementById('account_id').value.trim();
-  if (!accountId) {{ alert('Enter your NEAR account id first.'); return; }}
-  const wallet = await findWallet();
-  if (!wallet) {{
-    alert('No NEP-413 wallet was detected. Sign the message manually and paste the public key and signature.');
-    return;
-  }}
-  try {{
-    const result = await wallet.signMessage({{ message, recipient, nonce, callbackUrl }});
-    document.getElementById('account_id').value = result.accountId;
-    document.getElementById('public_key').value = result.publicKey;
-    document.getElementById('signature').value = result.signature;
-  }} catch (err) {{
-    alert('Signing failed: ' + err);
-  }}
+let connector = null;
+
+async function getConnector() {{
+  if (connector) return connector;
+  // NEAR Connect ships as a browser module. The OIDC service has no bundler, so load it from an
+  // ESM CDN. Wallets run sandboxed; this page never sees a private key.
+  const module = await import("https://esm.sh/@hot-labs/near-connect@0.12.0");
+  connector = new module.NearConnector({{
+    network,
+    features: {{
+      signMessage: true,
+      mainnet: network === "mainnet",
+      testnet: network === "testnet",
+    }},
+    footerBranding: null,
+  }});
+  return connector;
+}}
+
+if (callbackUrl) {{
+  button.disabled = true;
+  setWalletStatus(
+    "This provider requires a NEP-413 callback URL, which NEAR Connect cannot include. Sign the message manually below.",
+    true,
+  );
+}} else {{
+  button.addEventListener("click", async () => {{
+    button.disabled = true;
+    setWalletStatus("Opening your wallet…", false);
+    try {{
+      const connector = await getConnector();
+      setWalletStatus("Choose a wallet…", false);
+      // Always open the selector so it only offers wallets that can sign NEP-413 messages.
+      const wallet = await connector.connect();
+      // Wallets with several connected accounts need an explicit signer.
+      let signerId;
+      try {{
+        signerId = (await wallet.getAccounts())[0]?.accountId;
+      }} catch {{}}
+      setWalletStatus("Waiting for the signature…", false);
+      const params = {{ message, recipient, nonce }};
+      if (signerId) params.signerId = signerId;
+      const signed = await wallet.signMessage(params);
+      document.getElementById("account_id").value = signed.accountId;
+      document.getElementById("public_key").value = signed.publicKey;
+      document.getElementById("signature").value = signed.signature;
+      setWalletStatus("Signed in as " + signed.accountId + ". Continuing…", false);
+      form.requestSubmit();
+    }} catch (error) {{
+      button.disabled = false;
+      setWalletStatus(
+        "Wallet sign-in failed: " + (error && error.message ? error.message : error),
+        true,
+      );
+    }}
+  }});
 }}
 </script>
 </body>
@@ -147,6 +188,7 @@ async function signWithWallet() {{
         nonce_js = js_string(&nonce),
         recipient_js = js_string(&recipient),
         callback_js = js_option_string(callback_url),
+        network_js = js_string(network),
     )
 }
 
@@ -186,4 +228,50 @@ pub fn index_page(config: &Config) -> String {
         issuer = escape(config.base_url()),
         contract = escape(&config.contract_id),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> Config {
+        toml::from_str(include_str!("../config.example.toml")).unwrap()
+    }
+
+    fn pending() -> PendingLogin {
+        PendingLogin {
+            id: "request-1".to_owned(),
+            client_id: "demo-app".to_owned(),
+            redirect_uri: "https://app.example.com/callback".to_owned(),
+            state: Some("state".to_owned()),
+            scope: "openid profile roles".to_owned(),
+            oidc_nonce: None,
+            code_challenge: "challenge".to_owned(),
+            nep413_nonce: [7; 32],
+            message: "Sign <in>".to_owned(),
+            created_at: 0,
+            expires_at: 0,
+        }
+    }
+
+    #[test]
+    fn login_page_wires_near_connect() {
+        let config = config();
+        let html = login_page(&config, &config.clients[0], &pending());
+        assert!(html.contains("Sign with NEAR Connect"));
+        assert!(html.contains("https://esm.sh/@hot-labs/near-connect@0.12.0"));
+        assert!(html.contains("const network = \"testnet\";"));
+        assert!(html.contains("new module.NearConnector({"));
+        assert!(html.contains("form.requestSubmit();"));
+        assert!(html.contains("Sign &lt;in&gt;"));
+    }
+
+    #[test]
+    fn login_page_requires_manual_signing_when_a_callback_url_is_configured() {
+        let mut config = config();
+        config.nep413_callback_url = Some("https://auth.example.com/callback".to_owned());
+        let html = login_page(&config, &config.clients[0], &pending());
+        assert!(html.contains("const callbackUrl = \"https://auth.example.com/callback\";"));
+        assert!(html.contains("NEAR Connect cannot include"));
+    }
 }

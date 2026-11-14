@@ -17,6 +17,10 @@ listen = "127.0.0.1:8080"
 rpc_url = "https://rpc.testnet.near.org"
 contract_id = "payrole.testnet"
 
+# NEAR network used by the wallet sign-in button on the login page. Defaults to
+# the network implied by rpc_url.
+# network = "testnet"
+
 # PKCS#8 PEM RSA private key used to sign JWTs. If this is omitted, a fresh
 # ephemeral key is generated at startup and all tokens become invalid on
 # restart. In production, generate a key and keep it secret:

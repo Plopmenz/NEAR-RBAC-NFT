@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   beginOidcLogin,
   buildAuthorizeUrl,
+  clearOidcSession,
   completeOidcLogin,
   pkceChallenge,
   randomUrlSafe,
@@ -184,5 +185,50 @@ describe("OIDC authorization-code flow", () => {
         fetcher: (async () => jsonResponse({})) as typeof fetch,
       }),
     ).rejects.toThrow("missing role");
+  });
+
+  it("removes the session and pending login when signing out", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      "payrole-nft:oidc:session:v1",
+      JSON.stringify({
+        issuer: "https://auth.example.com",
+        clientId: "payrole-web",
+        accessToken: "access-token",
+        idToken: "",
+        userinfoEndpoint: "https://auth.example.com/userinfo",
+        expiresAt: Date.now() + 60_000,
+        scope: "openid",
+        accountId: "alice.testnet",
+        roles: ["admin"],
+      }),
+    );
+    storage.setItem("payrole-nft:oidc:pending:v1", "{}");
+
+    clearOidcSession(storage);
+
+    expect(readOidcSession(storage)).toBeNull();
+    expect(storage.getItem("payrole-nft:oidc:pending:v1")).toBeNull();
+  });
+
+  it("does not restore an expired session after a refresh", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      "payrole-nft:oidc:session:v1",
+      JSON.stringify({
+        issuer: "https://auth.example.com",
+        clientId: "payrole-web",
+        accessToken: "access-token",
+        idToken: "",
+        userinfoEndpoint: "https://auth.example.com/userinfo",
+        expiresAt: Date.now() - 1_000,
+        scope: "openid",
+        accountId: "alice.testnet",
+        roles: ["admin"],
+      }),
+    );
+
+    expect(readOidcSession(storage)).toBeNull();
+    expect(storage.getItem("payrole-nft:oidc:session:v1")).toBeNull();
   });
 });

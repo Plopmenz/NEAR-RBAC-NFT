@@ -128,6 +128,7 @@ reviewed build if you want the deploy form to hard-fail when the factory stores 
 5. In **My roles**, scan a member address. Claim salary when the claimable amount is non-zero.
 6. In **OIDC access**, press **Sign in with OIDC**, approve the NEP-413 message, and review the
    ✓ / ✗ access labels. **Refresh roles** re-reads on-chain memberships without signing in again.
+   Connecting a wallet does not sign in to this tab; an explicit OIDC session is required.
 
 Minting an existing role or burning a missing role fails on-chain. Minting attaches the
 contract-reported storage deposit. Burning requests `pay_pending: true`, so accrued salary is

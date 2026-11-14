@@ -157,15 +157,17 @@ enough to receive it.
 ### 8. Sign in with OIDC and see ✓ / ✗ access
 
 **Do:** Open the **OIDC access** tab and press **Sign in with OIDC**. The hosted provider shows a
-NEP-413 message; approve it with the same wallet account. You are redirected back to
-`/oidc/callback` and then to the access tab.
+NEAR Connect login page; choose a wallet and approve the NEP-413 message with the same wallet
+account. You are redirected back to `/oidc/callback` and then to the access tab.
 
 **See:** the session card shows the OIDC account, issuer, scopes, expiry, and live roles from
 `/userinfo`. Below it, each configured label is rendered with **✓ granted** or **✗ denied**,
 together with the roles that grant it, checked against role NFTs read directly from every
 registry contract. If no labels are configured, the page uses role names as sample labels so the
 check/cross behaviour is still visible. Press **Refresh roles** after minting or burning to see
-access change without signing in again. **Sign out** clears the local session.
+access change without signing in again. **Sign out** clears the local session; a connected
+wallet is a separate session and does not sign you in here, so refreshing after sign-out stays
+signed out.
 
 The web app is a public OpenID Connect client using the authorization-code flow with PKCE
 (S256); it stores no client secret. The provider must register the exact callback
@@ -859,7 +861,7 @@ with **NEP-413** and authorizes it with **live on-chain roles**.
    `scope`, optional `state`/`nonce`, `code_challenge`, and
    `code_challenge_method=S256`.
 2. The provider shows a login page containing a NEP-413 message and nonce. The user signs it
-   with a wallet key (or pastes a signature). The page posts `account_id`, `public_key`, and
+   with NEAR Connect (or pastes a signature). The page posts `account_id`, `public_key`, and
    `signature` to `/login`.
 3. `/login` verifies the signature over the NEP-413 payload, checks that the public key is an
    access key of the claimed account (unless `verify_access_key=false`), and checks the
@@ -922,6 +924,7 @@ main fields are:
 | `listen` | `127.0.0.1:8080` | Bind address. |
 | `rpc_url` | required | NEAR JSON-RPC endpoint for `roles_of` and access-key checks. |
 | `contract_id` | required | Deployed `payrole-nft` account. |
+| `network` | from `rpc_url` | `mainnet` or `testnet` for the NEAR Connect wallet button. |
 | `clients` | required | One or more registered OIDC clients. |
 | `nep413_recipient` | issuer host | Recipient string bound into the signed message. |
 | `nep413_callback_url` | unset | Optional callback URL bound into the signed message. |
@@ -1122,8 +1125,10 @@ This is deliberately a hackathon-scale implementation. Known limitations:
   network layer if you need stronger isolation.
 - OAuth errors from `/authorize` are returned as JSON rather than redirected to the client's
   redirect URI. `/token` and `/login` follow the JSON error style.
-- The built-in login page relies on a NEP-413 wallet (`window.nearWallet` or a browser wallet
-  extension) or manual signature entry. It is a developer-friendly login, not a polished consent UI.
+- The built-in login page loads NEAR Connect from an ESM CDN and signs the NEP-413 message in
+  the browser; manual signature entry remains as a fallback. If `nep413_callback_url` is set,
+  the wallet button is disabled because NEAR Connect cannot include a callback URL in the signed
+  payload. The page is a developer-friendly login, not a polished consent UI.
 - No per-IP rate limiting, audit logging, or brute-force protection is built in. Rate-limit
   `/login`, `/authorize`, `/token`, and `/introspect` at the reverse proxy.
 - `verify_access_key=false` is unsafe outside local experiments; it removes the binding

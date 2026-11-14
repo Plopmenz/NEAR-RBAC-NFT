@@ -225,12 +225,14 @@ export async function scanRoles(force = false): Promise<void> {
 export async function scanAccess(force = false): Promise<void> {
   const status = byId<HTMLElement>("access-status");
   state.oidcError = "";
-  let accountId = state.oidcSession?.accountId ?? state.walletAccount ?? "";
+  // Access is an OIDC view. A connected wallet is a separate session and must not be treated as
+  // signed in here, otherwise signing out and refreshing would silently restore wallet roles.
+  let accountId = state.oidcSession?.accountId ?? "";
   if (!accountId) {
     state.accessMemberships = [];
     state.accessScanned = false;
     renderAccess();
-    setStatus(status, "Sign in with OIDC or connect a wallet to inspect access.", "error");
+    setStatus(status, "Sign in with OIDC to inspect access.", "error");
     return;
   }
   if (!isValidAccountId(accountId)) {
@@ -314,6 +316,9 @@ export function handleOidcLogout(): void {
   state.oidcError = "";
   state.accessMemberships = [];
   state.accessScanned = false;
+  state.accessLoading = false;
+  // Invalidate any in-flight scan so it cannot repopulate the access list after sign-out.
+  ++runtime.accessRun;
   renderAccess();
   setStatus(byId<HTMLElement>("access-status"), "Signed out of OIDC.", "ok");
 }
@@ -391,7 +396,7 @@ export function selectTab(tab: Tab): void {
   if (tab === "roles" && state.rolesAddress && !state.rolesScanned && !state.rolesLoading) {
     void scanRoles();
   }
-  if (tab === "access" && !state.accessScanned && !state.accessLoading) {
+  if (tab === "access" && state.oidcSession && !state.accessScanned && !state.accessLoading) {
     void scanAccess();
   }
 }
@@ -436,15 +441,6 @@ export function updateWallet(accountId: string | null): void {
     !state.rolesLoading
   ) {
     void scanRoles();
-  }
-  if (
-    accountId &&
-    state.tab === "access" &&
-    !state.oidcSession &&
-    !state.accessScanned &&
-    !state.accessLoading
-  ) {
-    void scanAccess();
   }
 }
 

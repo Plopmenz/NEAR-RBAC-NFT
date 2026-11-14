@@ -93,6 +93,10 @@ pub struct Config {
     pub rpc_url: String,
     /// Account id of the PayRole contract.
     pub contract_id: String,
+    /// NEAR network used by the wallet sign-in button on the login page: `mainnet` or `testnet`.
+    /// Defaults to the network implied by `rpc_url`.
+    #[serde(default)]
+    pub network: Option<String>,
     /// Registered clients.
     pub clients: Vec<ClientConfig>,
 
@@ -185,6 +189,11 @@ impl Config {
         if self.store_sweep_interval_secs == 0 {
             bail!("store_sweep_interval_secs must be positive");
         }
+        if let Some(network) = &self.network {
+            if network != "mainnet" && network != "testnet" {
+                bail!("network must be \"mainnet\" or \"testnet\"");
+            }
+        }
         if !self.allowed_scopes.iter().any(|scope| scope == "openid") {
             bail!("allowed_scopes must contain the openid scope");
         }
@@ -270,6 +279,18 @@ impl Config {
     pub fn nep413_callback_url(&self) -> Option<&str> {
         self.nep413_callback_url.as_deref()
     }
+
+    /// NEAR network used by the wallet sign-in button.
+    pub fn network(&self) -> &str {
+        if let Some(network) = &self.network {
+            return network;
+        }
+        if self.rpc_url.contains("mainnet") {
+            "mainnet"
+        } else {
+            "testnet"
+        }
+    }
 }
 
 #[cfg(test)]
@@ -282,6 +303,7 @@ mod tests {
             listen: "127.0.0.1:8080".to_owned(),
             rpc_url: "https://rpc.testnet.near.org".to_owned(),
             contract_id: "payrole.testnet".to_owned(),
+            network: None,
             clients: vec![ClientConfig {
                 client_id: "app".to_owned(),
                 name: None,
@@ -320,6 +342,29 @@ mod tests {
     #[test]
     fn recipient_defaults_to_issuer_host() {
         assert_eq!(base_config().recipient(), "auth.example.com");
+    }
+
+    #[test]
+    fn network_defaults_to_the_rpc_network() {
+        let config = base_config();
+        assert_eq!(config.network(), "testnet");
+        let mut config = base_config();
+        config.rpc_url = "https://rpc.mainnet.near.org".to_owned();
+        assert_eq!(config.network(), "mainnet");
+    }
+
+    #[test]
+    fn explicit_network_wins() {
+        let mut config = base_config();
+        config.network = Some("mainnet".to_owned());
+        assert_eq!(config.network(), "mainnet");
+    }
+
+    #[test]
+    fn rejects_unknown_networks() {
+        let mut config = base_config();
+        config.network = Some("devnet".to_owned());
+        assert!(config.validate().is_err());
     }
 
     #[test]

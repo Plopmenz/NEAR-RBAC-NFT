@@ -140,6 +140,7 @@ impl TestApp {
             listen: "127.0.0.1:0".to_owned(),
             rpc_url: "https://rpc.example.com".to_owned(),
             contract_id: CONTRACT.to_owned(),
+            network: None,
             clients: vec![
                 ClientConfig {
                     client_id: APP.to_owned(),

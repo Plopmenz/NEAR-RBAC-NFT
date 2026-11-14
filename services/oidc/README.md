@@ -11,8 +11,8 @@ architecture, and security model; this file focuses on running the service.
 1. An OIDC client redirects to `/authorize` with PKCE (`S256`), a registered `client_id` and
    exact `redirect_uri`, and optional `state`/`nonce`.
 2. The provider renders a login page with a NEP-413 message and a 256-bit nonce.
-3. The user signs the message with a NEAR wallet key. The page posts the account id, public
-   key, and signature to `/login`.
+3. The user signs the message with NEAR Connect. The page posts the account id, public key,
+   and signature to `/login`. Manual signature entry remains as a fallback.
 4. The provider verifies the signature, optionally checks that the public key is an access
    key of the claimed account, then reads `roles_of` from the contract and checks the
    client's `required_roles`.
@@ -49,9 +49,10 @@ Copy [`config.example.toml`](config.example.toml) to `config.toml` (git-ignored)
 | `listen` | `127.0.0.1:8080` | Socket address to bind. |
 | `rpc_url` | required | NEAR JSON-RPC used for `roles_of` and `view_access_key`. |
 | `contract_id` | required | Deployed `payrole-nft` account. |
+| `network` | from `rpc_url` | `mainnet` or `testnet`, used by the NEAR Connect wallet button. |
 | `clients` | required | At least one `[[clients]]` table. |
 | `nep413_recipient` | issuer host | Must match the recipient used by the wallet. |
-| `nep413_callback_url` | unset | If set, it is included in the signed payload; wallets must use the same value. |
+| `nep413_callback_url` | unset | If set, it is included in the signed payload; wallets must use the same value. The NEAR Connect button is disabled because its `signMessage` cannot include a callback URL, so signing is manual. |
 | `access_token_ttl_secs` | `900` | Also the session lifetime. |
 | `id_token_ttl_secs` | `900` | ID-token lifetime. |
 | `authorization_code_ttl_secs` | `300` | One-time code lifetime. |
@@ -237,6 +238,9 @@ ID token: the same identity fields plus `auth_time`, `sid`, optional `nonce`,
   Add only origins you control.
 - No per-IP rate limiting, consent UI, dynamic client registration, or audit logging is included.
   Add request rate limiting at the reverse proxy.
+- The login page loads `@hot-labs/near-connect` from `https://esm.sh`. If the reverse proxy sets
+  a Content-Security-Policy, allow that origin in `script-src` and `connect-src`, or self-host the
+  module and change the import URL in `src/html.rs`.
 
 ## Tests
 
